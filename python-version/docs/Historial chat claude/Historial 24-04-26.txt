@@ -1,0 +1,1024 @@
+      414      df_match = pd.DataFrame({                                                                                                    
+      415          "_row_id":             df_candidatos["_row_id"].astype("int64"),                                                         
+      416          "NUMERO_ORDEN":        df_candidatos["NUMERO_ORDEN"].astype("Int64"),                                                    
+      415 -        "Suministro_Final":    pd.Series(pd.NA, index=df_candidatos.index, dtype="Int64"),                                       
+      416 -        "ORD_FECHA_FIN":       pd.Series(pd.NaT, index=df_candidatos.index, dtype="datetime64[ns]"),                           
+      417 -        "TRAZA_CALIDAD":       pd.Series("No Corresponde TOR CE", index=df_candidatos.index, dtype="string"),                    
+      418 -        "db_colocado":         pd.Series(pd.NA, index=df_candidatos.index, dtype="float64"),                                   
+      419 -        "db_retirado":         pd.Series(pd.NA, index=df_candidatos.index, dtype="float64"),                              
+      417 +        "Suministro_Final":    pd.array([pd.NA] * n, dtype="Int64"),                                                      
+      418 +        "ORD_FECHA_FIN":       pd.Series(pd.NaT, index=idx, dtype="datetime64[us]"),                                      
+      419 +        "TRAZA_CALIDAD":       pd.array(["No Corresponde TOR CE"] * n, dtype="string"),                                   
+      420 +        "db_colocado":         np.full(n, np.nan, dtype="float64"),                                                       
+      421 +        "db_retirado":         np.full(n, np.nan, dtype="float64"),                                                       
+      422          "SEC_CODIGO_ORIGEN":   df_candidatos["SEC_CODIGO_ORIGEN"].astype("string"),
+      421 -        "ID_OPERARIO_RAW":     pd.Series(pd.NA, index=df_candidatos.index, dtype="Int64"),                                
+      423 +        "ID_OPERARIO_RAW":     pd.array([pd.NA] * n, dtype="Int64"),                                                      
+      424          "ORD_TIPO_DETECTADO":  df_candidatos["TIPO_ORDEN_DETECTADO"].astype("string"),
+      425      })[_COLS_RESULTADO]
+      426  
+
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -m src.etapa3_core 2>&1
+      | tail -50)                  
+  ⎿  2026-04-24 09:56:48,337 INFO       NE                                           7
+     2026-04-24 09:56:48,337 INFO       HC                                           4
+     2026-04-24 09:56:48,337 INFO       HO                                           3
+     … +38 lines (ctrl+o to expand)                                 
+  ⎿  (timeout 2m)                                  
+                                                         
+● Cruce B OK. CONECTAR: 72,456 / 76,556 (95%) pendientes capturados como "No Corresponde TOR CE" — la mayoría son CX/IC/CO/IN (cortes,      
+  inspecciones, cambios). Quedan 4,100 para Cruce C.               
+                                                                                                                                            
+* Building cruce C… (6m 51s · ↓ 20.0k tokens · thought for 56s)                                                                           
+  ⎿  ◼ 3.3d — Cruce C (rescate técnico por medidor)                                                                                         
+     ◻ 3.3e — Ensamblado + reglas huérfano + correcciones                                                                                   
+     ◻ 3.3f — Enriquecimiento FASE + dedup Repetido X Sumi                                                                                  
+     ◻ 3.3g — Normalización a COLS_FACT + MERGE + truncate stagings                                                                         
+     ◻ 3.5 — Panel KPIs (herramienta de validación contra Power BI)                                                                         
+      … +1 pending, 6 completed
+                                                                                                                                            
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ctrl+t to hide tasks                            Now using extra usage
+
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -m src.etapa3_core 2>&1
+      | tail -50)
+  ⎿  2026-04-24 09:56:48,337 INFO       NE                                           7
+     2026-04-24 09:56:48,337 INFO       HC                                           4
+     2026-04-24 09:56:48,337 INFO       HO                                           3
+     … +38 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● Cruce B OK. CONECTAR: 72,456 / 76,556 (95%) pendientes capturados como "No Corresponde TOR CE" — la mayoría son CX/IC/CO/IN (cortes,
+  inspecciones, cambios). Quedan 4,100 para Cruce C.
+
+● T#7 — Cruce C es el más complejo: dos sub-cruces (rescate por medidor colocado / por retirado), unión, luego match con orden CE propia por
+   el suministro real (no por el suministro escrito). Implemento.
+                                                         
+● Update(src\etapa3_core.py)                                   
+  ⎿  Added 126 lines, removed 1 line                               
+      434      return df_match, df_pendientes_B                    
+      435                                                 
+      436                                                          
+      437 +def cruce_C(                                                                                                                     
+      438 +    df_pendientes_B: pd.DataFrame,                                                                                        
+      439 +    df_tecnica: pd.DataFrame,                                                                                                    
+      440 +    df_ord_ce_propia: pd.DataFrame,                                                                                              
+      441 +    df_base: pd.DataFrame,                                                                                                
+      442 +) -> tuple[pd.DataFrame, pd.DataFrame]:                                                                                          
+      443 +    """Cruce C — rescate técnico por número de medidor.                                                                        
+      444 +                                                                                                                          
+      445 +    Replica el bloque "Cruce C: Rescate por número de medidor" de                                                         
+      446 +    procesar_pd_gral_refactor.py L.480-540 (lo que en PySpark se llama                                                    
+      447 +    `df_resultados_B` por nombrado histórico, pero conceptualmente es                                                     
+      448 +    el resultado del Cruce C).                                                                                            
+      449 +                                                                                                                          
+      450 +    Idea: el operario escribió mal el suministro pero el número de medidor                                                
+      451 +    está bien. Usando df_tecnica podemos identificar el suministro REAL                                                   
+      452 +    al que pertenece ese medidor, y luego buscar la orden CE de ese                                                       
+      453 +    suministro real.                                                                                                      
+      454 +                                                                                                                          
+      455 +    Dos sub-cruces se unen:                                                                                               
+      456 +      - rescate por `medidorColocado` (cuando está cargado).                                                              
+      457 +      - rescate por `medidorRetirado` (solo si colocado es NaN).                                                          
+      458 +                                                                                                                          
+      459 +    TRAZA:                                                                                                                
+      460 +      - "Corregido Sumi" si el medidorRetirado del parte == retirado esperado                                             
+      461 +        en df_tecnica (operario escribió bien los EQP, mal el sumi).                                                      
+      462 +      - "Corregido Sumi Nro EQP" si los retirados no coinciden (operario                                                  
+      463 +        escribió mal el sumi y los EQP).                                                                                  
+      464 +    """                                                                                                                   
+      465 +    if df_pendientes_B.empty or df_tecnica.empty or df_ord_ce_propia.empty:                                               
+      466 +        log.info("    Cruce C: sin candidatos.")                                                                          
+      467 +        return _resultado_vacio(), df_pendientes_B                                                                        
+      468 +                                                                                                                          
+      469 +    # ── Sub-cruce 1: medidorColocado != NaN, match por db_colocado ──────────                                            
+      470 +    tec_colocado = df_tecnica.rename(columns={                                                                            
+      471 +        "db_colocado": "eqp_medidor_colocado",                                                                            
+      472 +        "srv_tecnico": "eqp_suministro_real",                                                                             
+      473 +        "db_retirado": "eqp_retirado_esperado",                                                                           
+      474 +    })                                                                                                                    
+      475 +    base_pend_col = df_pendientes_B.loc[                                                                                  
+      476 +        df_pendientes_B["medidorColocado"].notna(),                                                                       
+      477 +        ["_row_id", "medidorColocado"],                                                                                   
+      478 +    ]                                                                                                                     
+      479 +    df_rescate_col = base_pend_col.merge(                                                                                 
+      480 +        tec_colocado,                                                                                                     
+      481 +        left_on="medidorColocado", right_on="eqp_medidor_colocado",                                                       
+      482 +        how="inner",                                                                                                      
+      483 +    )[[                                                                                                                   
+      484 +        "_row_id", "eqp_suministro_real", "eqp_retirado_esperado", "eqp_medidor_colocado",                                
+      485 +    ]].rename(columns={"eqp_medidor_colocado": "db_colocado"})                                                            
+      486 +                                                                                                                          
+      487 +    # ── Sub-cruce 2: medidorColocado NaN AND medidorRetirado != NaN, match por db_retirado ──                            
+      488 +    tec_retirado = df_tecnica.rename(columns={                                                                            
+      489 +        "db_retirado": "eqp_retirado_match",                                                                              
+      490 +        "srv_tecnico": "eqp_suministro_real",                                                                             
+      491 +        "db_colocado": "eqp_colocado_inferido",                                                                           
+      492 +    })                                                                                                                    
+      493 +    base_pend_ret = df_pendientes_B.loc[                                                                                  
+      494 +        df_pendientes_B["medidorColocado"].isna() & df_pendientes_B["medidorRetirado"].notna(),                           
+      495 +        ["_row_id", "medidorRetirado"],                                                                                   
+      496 +    ]                                                                                                                     
+      497 +    df_rescate_ret = base_pend_ret.merge(                                                                                 
+      498 +        tec_retirado,                                                                                                     
+      499 +        left_on="medidorRetirado", right_on="eqp_retirado_match",                                                         
+      500 +        how="inner",                                                                                                      
+      501 +    )[[                                                                                                                   
+      502 +        "_row_id", "eqp_suministro_real", "eqp_retirado_match", "eqp_colocado_inferido",                                  
+      503 +    ]].rename(columns={                                                                                                   
+      504 +        "eqp_retirado_match":    "eqp_retirado_esperado",                                                                 
+      505 +        "eqp_colocado_inferido": "db_colocado",                                                                           
+      506 +    })                                                                                                                    
+      507 +                                                                                                                          
+      508 +    df_rescate = pd.concat([df_rescate_col, df_rescate_ret],                                                              
+      509 +                           ignore_index=True, sort=False)                                                                 
+      510 +    if df_rescate.empty:                                                                                                  
+      511 +        log.info("    Cruce C: 0 medidores coincidieron con df_tecnica.")                                                 
+      512 +        return _resultado_vacio(), df_pendientes_B                                                                        
+      513 +                                                                                                                          
+      514 +    # ── Buscar la orden CE del suministro REAL (no el escrito en el parte) ──                                            
+      515 +    df_con_orden = df_rescate.merge(                                                                                      
+      516 +        df_ord_ce_propia,                                                                                                 
+      517 +        left_on="eqp_suministro_real", right_on="ord_suministro",                                                         
+      518 +        how="inner",                                                                                                      
+      519 +    )                                                                                                                     
+      520 +    # Trae Fecha_Norm y medidorRetirado del df_base (necesarios para rank y para TRAZA)                                   
+      521 +    df_con_orden = df_con_orden.merge(                                                                                    
+      522 +        df_base[["_row_id", "Fecha_Norm", "medidorRetirado"]],                                                            
+      523 +        on="_row_id", how="inner",                                                                                        
+      524 +    )                                                                                                                     
+      525 +                                                                                                                          
+      526 +    df_con_orden = rank_one_by_dias(df_con_orden)                                                                         
+      527 +    if df_con_orden.empty:                                                                                                
+      528 +        log.info("    Cruce C: 0 órdenes CE para los suministros rescatados (ventana 15d).")                              
+      529 +        return _resultado_vacio(), df_pendientes_B                                                                        
+      530 +                                                                                                                          
+      531 +    # ── TRAZA: si los retirados coinciden → "Corregido Sumi", sino → "Corregido Sumi Nro EQP" ──                         
+      532 +    traza = np.where(                                                                                                     
+      533 +        df_con_orden["medidorRetirado"] == df_con_orden["eqp_retirado_esperado"],                                         
+      534 +        "Corregido Sumi",                                                                                                 
+      535 +        "Corregido Sumi Nro EQP",                                                                                         
+      536 +    )                                                                                                                     
+      537 +                                                                                                                          
+      538 +    n = len(df_con_orden)                                                                                                 
+      539 +    df_resultados_C = pd.DataFrame({                                                                                      
+      540 +        "_row_id":             df_con_orden["_row_id"].astype("int64"),                                                   
+      541 +        "NUMERO_ORDEN":        df_con_orden["NUMERO_ORDEN"].astype("Int64"),                                              
+      542 +        "Suministro_Final":    df_con_orden["eqp_suministro_real"].astype("Int64"),                                       
+      543 +        "ORD_FECHA_FIN":       df_con_orden["ORD_FECHA_FIN"],                                                             
+      544 +        "TRAZA_CALIDAD":       pd.array(traza, dtype="string"),                                                           
+      545 +        "db_colocado":         df_con_orden["db_colocado"].astype("float64"),                                             
+      546 +        "db_retirado":         df_con_orden["eqp_retirado_esperado"].astype("float64"),                                   
+      547 +        "SEC_CODIGO_ORIGEN":   df_con_orden["SEC_CODIGO_ORIGEN"].astype("string"),                                        
+      548 +        "ID_OPERARIO_RAW":     df_con_orden["ID_OPERARIO_RAW"].astype("Int64"),                                           
+      549 +        "ORD_TIPO_DETECTADO":  pd.array([pd.NA] * n, dtype="string"),                                                     
+      550 +    })[_COLS_RESULTADO]                                                                                                   
+      551 +                                                                                                                          
+      552 +    matched_ids = set(df_resultados_C["_row_id"])                                                                         
+      553 +    df_pendientes_C = df_pendientes_B.loc[~df_pendientes_B["_row_id"].isin(matched_ids)].copy()                           
+      554 +                                                                                                                          
+      555 +    log.info(                                                                                                             
+      556 +        "    Cruce C: %d matches / %d pendientes (de %d entrantes).",                                                     
+      557 +        len(df_resultados_C), len(df_pendientes_C), len(df_pendientes_B),                                                 
+      558 +    )                                                                                                                     
+      559 +    return df_resultados_C, df_pendientes_C                                                                               
+      560 +                                                                                                                          
+      561 +                                                                                                                          
+      562  # =============================================================================
+      438 -# Entrypoint del waterfall (estado: T#4 + T#5 + T#6)                                                                      
+      563 +# Entrypoint del waterfall (estado: T#4 + T#5 + T#6 + T#7)                                                                
+      564  # =============================================================================
+      565  
+      566  def ejecutar_core_para_contratista(contratista: str) -> dict | None:
+
+● Update(src\etapa3_core.py)                                   
+  ⎿  Added 9 lines                                 
+      610      log.info("  Ejecutando Cruce B (rechazo TOR no-CE)...")
+      611      df_resultados_B, df_pendientes_B = cruce_B(df_pendientes_A, df_ord_rechazo_tor)
+      612                                                          
+      613 +    log.info("  Ejecutando Cruce C (rescate técnico por medidor)...")                                                     
+      614 +    df_resultados_C, df_pendientes_C = cruce_C(                                                                           
+      615 +        df_pendientes_B, df_tecnica, df_ord_ce_propia, df_base                                                            
+      616 +    )                                                                                                                            
+      617 +                                                                                                                          
+      618      def _conteo(df: pd.DataFrame) -> dict:                                                                                       
+      619          return df["TRAZA_CALIDAD"].value_counts().to_dict() if not df.empty else {}                                            
+      620                                                                                                                                   
+     ...                                                                                                                                  
+      634          "cruce_B matches":          len(df_resultados_B),
+      635          "cruce_B pendientes":       len(df_pendientes_B),
+      636          "cruce_B por TIPO_ORDEN":   df_resultados_B["ORD_TIPO_DETECTADO"].value_counts().to_dict() if not df_resultados_B.
+           empty else {},
+      637 +        "cruce_C matches":          len(df_resultados_C),                                                                 
+      638 +        "cruce_C pendientes":       len(df_pendientes_C),                                                                 
+      639 +        "cruce_C por TRAZA":        _conteo(df_resultados_C),                                                             
+      640 +        "huerfanos_finales":        len(df_pendientes_C),                                                                 
+      641      }
+      642  
+      643      log.info("  Resumen:")
+
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -m src.etapa3_core 2>&1
+      | tail -60)                                  
+  ⎿  2026-04-24 09:59:09,611 INFO       HO                                           3
+     2026-04-24 09:59:09,611 INFO       AR                                           2
+     2026-04-24 09:59:09,611 INFO       TM                                           1
+     … +46 lines (ctrl+o to expand)                                
+  ⎿  (timeout 2m)                                        
+                                                          
+● Cruce C OK. Verificación numérica (CONECTAR): 35,194 + 72,456 + 77 + 4,023 = 111,750 ✅. (COOPLYF: 13,135 + 30 + 0 + 152 = 13,317 ✅).    
+                                                                   
+  Read 1 file (ctrl+o to expand)                                                                                                            
+                                                                                                                                          
+● Implemento T#8 — ensamblado:                                                                                                              
+                                                                                                                                            
+● Update(src\etapa3_core.py)                                                                                                                
+  ⎿  Added 73 lines, removed 1 line                                                                                                         
+      560                                                                                                                                   
+      561                                                          
+      562  # =============================================================================                                                  
+      563 -# Entrypoint del waterfall (estado: T#4 + T#5 + T#6 + T#7)                                                                     
+      563 +# Ensamblado del waterfall (T#8)                                                                                                 
+      564  # =============================================================================                                                  
+      565                                                                                                                                   
+      566 +def ensamblar_waterfall(                                                                                                         
+      567 +    df_base: pd.DataFrame,                                                                                                       
+      568 +    df_resultados_A: pd.DataFrame,                                                                                             
+      569 +    df_resultados_B: pd.DataFrame,                                                                                               
+      570 +    df_resultados_C: pd.DataFrame,                                                                                             
+      571 +) -> pd.DataFrame:                                                                                                        
+      572 +    """Une los 3 cruces, asigna trazas huérfano y aplica regla "Otro Origen".                                             
+      573 +                                                                                                                          
+      574 +    Replica el bloque "Ensamblado final del waterfall" de                                                                 
+      575 +    procesar_pd_gral_refactor.py L.554-591.                                                                               
+      576 +                                                                                                                          
+      577 +    Reglas (en orden):                                                                                                    
+      578 +      1. df_base LEFT JOIN concat(A, B, C) por _row_id.                                                                   
+      579 +      2. TRAZA_CALIDAD huérfano:                                                                                          
+      580 +            si Suministro_Norm IS NOT NULL  → "Sin Orden Asociada"                                                        
+      581 +            else si medidorColocado IS NULL → "Error Sumi Sin Nro Medidor"                                                
+      582 +            else                              → "Error Sumi Y Nro Medidor"                                                
+      583 +      3. Suministro_Final = coalesce(Suministro_Final, Suministro_Norm).                                                  
+      584 +      4. Regla "Otro Origen": pisa TRAZA si SEC_CODIGO_ORIGEN existe y != "PROTELEM".                                     
+      585 +      5. Inyección de medidores corregidos: para TRAZAS_CORRECCION_MEDIDOR,                                               
+      586 +         pisar medidorColocado/Retirado con db_colocado/db_retirado.                                                      
+      587 +    """                                                                                                                   
+      588 +    # 1. Concat resultados de los 3 cruces (mismo schema canónico).                                                       
+      589 +    df_resultados = pd.concat(                                                                                            
+      590 +        [df_resultados_A, df_resultados_B, df_resultados_C],                                                              
+      591 +        ignore_index=True, sort=False,                                                                                    
+      592 +    )                                                                                                                     
+      593 +                                                                                                                          
+      594 +    # 2. Left join con df_base por _row_id.                                                                               
+      595 +    df_full = df_base.merge(df_resultados, on="_row_id", how="left", suffixes=("", "_dup"))                               
+      596 +    # El concat puede traer dups si alguna col existe en df_base — no es nuestro caso,                                    
+      597 +    # pero el suffix asegura que si llega a pasar, no rompe silencioso.                                                   
+      598 +                                                                                                                          
+      599 +    # 3. TRAZA huérfano (coalesce). np.select preserva el orden de evaluación.                                            
+      600 +    cond_huerfano = [                                                                                                     
+      601 +        df_full["Suministro_Norm"].notna(),                                                                               
+      602 +        df_full["medidorColocado"].isna(),                                                                                
+      603 +    ]                                                                                                                     
+      604 +    choice_huerfano = ["Sin Orden Asociada", "Error Sumi Sin Nro Medidor"]                                                
+      605 +    traza_huerfano = pd.array(                                                                                            
+      606 +        np.select(cond_huerfano, choice_huerfano, default="Error Sumi Y Nro Medidor"),                                    
+      607 +        dtype="string",                                                                                                   
+      608 +    )                                                                                                                     
+      609 +    df_full["TRAZA_CALIDAD"] = df_full["TRAZA_CALIDAD"].astype("string").fillna(                                          
+      610 +        pd.Series(traza_huerfano, index=df_full.index)                                                                    
+      611 +    )                                                                                                                     
+      612 +                                                                                                                          
+      613 +    # 4. Suministro_Final = coalesce(Suministro_Final, Suministro_Norm).                                                  
+      614 +    df_full["Suministro_Final"] = df_full["Suministro_Final"].astype("Int64").fillna(                                     
+      615 +        df_full["Suministro_Norm"].astype("Int64")                                                                        
+      616 +    )                                                                                                                     
+      617 +                                                                                                                          
+      618 +    # 5. Regla "Otro Origen" — pisa lo que sea que tenga TRAZA.                                                           
+      619 +    mask_otro_origen = (                                                                                                  
+      620 +        df_full["SEC_CODIGO_ORIGEN"].notna()                                                                              
+      621 +        & (df_full["SEC_CODIGO_ORIGEN"].astype("string") != "PROTELEM")                                                   
+      622 +    )                                                                                                                     
+      623 +    df_full.loc[mask_otro_origen, "TRAZA_CALIDAD"] = "Otro Origen"                                                        
+      624 +                                                                                                                          
+      625 +    # 6. Inyección de medidores corregidos. Para las trazas que dicen "el operario                                        
+      626 +    #    cargó mal el medidor", pisamos con los valores de SIGEC (db_colocado/retirado).                                  
+      627 +    mask_correccion = df_full["TRAZA_CALIDAD"].isin(config.TRAZAS_CORRECCION_MEDIDOR)                                     
+      628 +    df_full.loc[mask_correccion, "medidorColocado"] = df_full.loc[mask_correccion, "db_colocado"]                         
+      629 +    df_full.loc[mask_correccion, "medidorRetirado"] = df_full.loc[mask_correccion, "db_retirado"]                         
+      630 +                                                                                                                          
+      631 +    return df_full                                                                                                        
+      632 +                                                                                                                          
+      633 +                                                                                                                          
+      634 +# =============================================================================                                           
+      635 +# Entrypoint del waterfall (estado: T#4 + T#5 + T#6 + T#7 + T#8)                                                          
+      636 +# =============================================================================                                           
+      637 +                                                                                                                          
+      638  def ejecutar_core_para_contratista(contratista: str) -> dict | None:
+      639      """Setup del waterfall para una contratista. Devuelve mini-resumen.
+      640  
+
+● Update(src\etapa3_core.py)                                                             
+  ⎿  Added 3 lines                                       
+      687          df_pendientes_B, df_tecnica, df_ord_ce_propia, df_base                
+      688      )                                                   
+      689                                                          
+      690 +    log.info("  Ensamblando waterfall + reglas huérfano + correcciones...")                                               
+      691 +    df_full = ensamblar_waterfall(df_base, df_resultados_A, df_resultados_B, df_resultados_C)                             
+      692 +                                                                                                                          
+      693      def _conteo(df: pd.DataFrame) -> dict:                                                                                       
+      694          return df["TRAZA_CALIDAD"].value_counts().to_dict() if not df.empty else {}
+      695                                                                                                                                   
+                                                                                                                                          
+● Update(src\etapa3_core.py)                                                                                                                
+  ⎿  Added 2 lines                                                                                                                        
+      713          "cruce_C pendientes":       len(df_pendientes_C),                      
+      714          "cruce_C por TRAZA":        _conteo(df_resultados_C),
+      715          "huerfanos_finales":        len(df_pendientes_C),
+      716 +        "df_full (post-ensamblado)": len(df_full),                                                                        
+      717 +        "TRAZA_CALIDAD final":      _conteo(df_full),                                                                     
+      718      }                                 
+      719                                                                                                                                   
+      720      log.info("  Resumen:")
+                                                                                                                                            
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -m src.etapa3_core 2>&1
+      | grep -E "(INICIANDO|Ejecu…)                                                                                                         
+  ⎿  2026-04-24 10:00:50,588 INFO INICIANDO PROCESO PARA: CONECTAR                                                                        
+     2026-04-24 10:00:57,062 INFO   Ejecutando Cruce A (suministro + orden CE propia)...
+     2026-04-24 10:00:57,157 INFO   Ejecutando Cruce B (rechazo TOR no-CE)...                                                               
+     … +30 lines (ctrl+o to expand)                                                                                                        
+  ⎿  (timeout 2m)                                         
+                                                                   
+● T#8 OK. La distribución final es interesante:                                                                                             
+                                                                                          
+  CONECTAR:                                                                                                                                 
+  - Otro Origen: 75,374 (67%) — la regla de PROTELEM pisa muchísimo (la mayoría de los partes vienen de otro sistema, no de la app móvil  
+  PROTELEM).                                                                                                                                
+  - Original OK: 28,015                                                                                                                     
+  - Sin Orden Asociada: 4,023 (los huérfanos)                                                                                               
+  - Resto: correcciones varias.                                                                                                             
+                                                                                                                                            
+  COOPLYF: 96% Original OK, comportamiento esperado.                                                                                        
+                                                                                                                                            
+  Read 1 file (ctrl+o to expand)                                                                                                            
+                                                                                                                                            
+● Para T#9 hay que tener cuidado con dos cosas que el CLAUDE.md menciona:      
+  1. Pre-expandir df_mc para FASE='AMBAS' (truco para evitar OR en el join).         
+  2. Mergesort + tie-breakers explícitos en la dedup Repetido X Sumi.
+                                                                   
+● Update(src\etapa3_core.py)                                                    
+  ⎿  Added 115 lines, removed 1 line                               
+      632                                                                                                                                   
+      633                                                          
+      634  # =============================================================================                                                  
+      635 -# Entrypoint del waterfall (estado: T#4 + T#5 + T#6 + T#7 + T#8)                                                                 
+      635 +# Enriquecimiento + dedup Repetido X Sumi (T#9)                                                                                  
+      636  # =============================================================================                                                  
+      637                                                                                                                                   
+      638 +def _expandir_mc_ambas(df_mc: pd.DataFrame) -> pd.DataFrame:                                                              
+      639 +    """Pre-expande filas FASE='AMBAS' a dos (MON y TRI).                                                                         
+      640 +                                                                                                                               
+      641 +    Truco crítico (CLAUDE.md regla #4): permite hacer un merge estándar por                                                      
+      642 +    (codTiposManoObra, FASE) en lugar de la condición Spark                                                                    
+      643 +    `(FASE == FASE_DESCUBIERTA) OR (FASE == "AMBAS")`, que en Pandas no se                                                
+      644 +    mapea a un merge nativo.                                                                                              
+      645 +    """                                                                                                                   
+      646 +    if "FASE" not in df_mc.columns:                                                                                       
+      647 +        return df_mc                                                                                                      
+      648 +    fase = df_mc["FASE"].astype("string")                                                                                 
+      649 +    df_otras = df_mc.loc[fase != "AMBAS"].copy()                                                                          
+      650 +    df_ambas = df_mc.loc[fase == "AMBAS"].copy()                                                                          
+      651 +                                                                                                                          
+      652 +    if df_ambas.empty:                                                                                                    
+      653 +        return df_otras                                                                                                   
+      654 +                                                                                                                          
+      655 +    df_mon = df_ambas.copy()                                                                                              
+      656 +    df_mon["FASE"] = "MON"                                                                                                
+      657 +    df_tri = df_ambas.copy()                                                                                              
+      658 +    df_tri["FASE"] = "TRI"                                                                                                
+      659 +    return pd.concat([df_otras, df_mon, df_tri], ignore_index=True, sort=False)                                           
+      660 +                                                                                                                          
+      661 +                                                                                                                          
+      662 +def enriquecer_y_deduplicar(                                                                                              
+      663 +    df_full: pd.DataFrame,                                                                                                
+      664 +    df_usr: pd.DataFrame,                                                                                                 
+      665 +    df_fases: pd.DataFrame,                                                                                               
+      666 +    df_mc: pd.DataFrame,                                                                                                  
+      667 +) -> pd.DataFrame:                                                                                                        
+      668 +    """Enriquece con USR_NOMBRE / FASE / precio + dedup Repetido X Sumi.                                                  
+      669 +                                                                                                                          
+      670 +    Replica L.593-646 de procesar_pd_gral_refactor.py.                                                                    
+      671 +                                                                                                                          
+      672 +    Pasos:                                                                                                                
+      673 +      1. Left join con df_usr para traer USR_NOMBRE; rename ID_OPERARIO_RAW → USR_ID.                                     
+      674 +      2. Left join con df_fases por medidorColocado → FASE_SIGEC. FASE_DESCUBIERTA                                        
+      675 +         = coalesce(FASE_SIGEC, "TRI" si codTiposManoObra contiene "01" sino "MON").                                      
+      676 +      3. Pre-expandir df_mc para FASE='AMBAS' y left join por                                                             
+      677 +         (codTiposManoObra, FASE_DESCUBIERTA) para traer COD_EPEC + cant_USE_unitario.                                    
+      678 +      4. Split por TRAZAS_DESCARTE_TECNICO: los descartados no entran a la dedup.                                         
+      679 +      5. Dedup por Suministro_Final con prioridad: COD_EPEC != "11" gana, luego                                           
+      680 +         Fecha más reciente, luego _row_id más alto. Posiciones >1 → "Repetido X Sumi".                                   
+      681 +    """                                                                                                                   
+      682 +    # ── 1. USR_NOMBRE ────────────────────────────────────────────────────────                                           
+      683 +    df_enriched = df_full.merge(                                                                                          
+      684 +        df_usr[["USR_NUMERO", "USR_NOMBRE"]],                                                                             
+      685 +        left_on="ID_OPERARIO_RAW", right_on="USR_NUMERO",                                                                 
+      686 +        how="left",                                                                                                       
+      687 +    ).drop(columns=["USR_NUMERO"], errors="ignore")                                                                       
+      688 +    df_enriched = df_enriched.rename(columns={"ID_OPERARIO_RAW": "USR_ID"})                                               
+      689 +                                                                                                                          
+      690 +    # ── 2. FASE_DESCUBIERTA ──────────────────────────────────────────────────                                           
+      691 +    df_con_fase = df_enriched.merge(                                                                                      
+      692 +        df_fases,                                                                                                         
+      693 +        left_on="medidorColocado", right_on="MEDIDOR_STOCK",                                                              
+      694 +        how="left",                                                                                                       
+      695 +    ).drop(columns=["MEDIDOR_STOCK"], errors="ignore")                                                                    
+      696 +                                                                                                                          
+      697 +    fase_heuristica = np.where(                                                                                           
+      698 +        df_con_fase["codTiposManoObra"].astype("string").str.contains("01", na=False),                                    
+      699 +        "TRI", "MON",                                                                                                     
+      700 +    )                                                                                                                     
+      701 +    df_con_fase["FASE_DESCUBIERTA"] = df_con_fase["FASE_SIGEC"].astype("string").fillna(                                  
+      702 +        pd.Series(fase_heuristica, index=df_con_fase.index, dtype="string")                                               
+      703 +    )                                                                                                                     
+      704 +                                                                                                                          
+      705 +    # ── 3. Join con maestro (con expansión AMBAS) ────────────────────────────                                           
+      706 +    df_mc_expandido = _expandir_mc_ambas(df_mc)                                                                           
+      707 +    df_con_precio = df_con_fase.merge(                                                                                    
+      708 +        df_mc_expandido,                                                                                                  
+      709 +        left_on=["codTiposManoObra", "FASE_DESCUBIERTA"],                                                                 
+      710 +        right_on=["COD_CONTRATISTA_INDIVIDUAL", "FASE"],                                                                  
+      711 +        how="left",                                                                                                       
+      712 +    )                                                                                                                     
+      713 +                                                                                                                          
+      714 +    # ── 4. Split para dedup ──────────────────────────────────────────────────                                           
+      715 +    mask_descarte = df_con_precio["TRAZA_CALIDAD"].isin(config.TRAZAS_DESCARTE_TECNICO)                                   
+      716 +    df_descartes_directos = df_con_precio.loc[mask_descarte].copy()                                                       
+      717 +    df_para_analizar      = df_con_precio.loc[~mask_descarte].copy()                                                      
+      718 +                                                                                                                          
+      719 +    # ── 5. Dedup Repetido X Sumi ─────────────────────────────────────────────                                           
+      720 +    if not df_para_analizar.empty:                                                                                        
+      721 +        # prioridad_cod=1 si COD_EPEC != "11" (Informado), sino 0.                                                        
+      722 +        # Comparamos como string para robustez (COD_EPEC puede ser Int64 o object).                                       
+      723 +        cod_epec_str = df_para_analizar["COD_EPEC"].astype("string")                                                      
+      724 +        df_para_analizar["prioridad_cod"] = np.where(cod_epec_str != "11", 1, 0)                                          
+      725 +                                                                                                                          
+      726 +        # Window equivalente: orden estable con tie-breakers explícitos.                                                  
+      727 +        # Ascendente Suministro_Final para que groupby/cumcount sea correcto;                                             
+      728 +        # descendente prioridad_cod / Fecha_Norm / _row_id para que la "primera"                                          
+      729 +        # fila por suministro sea la mejor.                                                                               
+      730 +        df_para_analizar = df_para_analizar.sort_values(                                                                  
+      731 +            ["Suministro_Final", "prioridad_cod", "Fecha_Norm", "_row_id"],                                               
+      732 +            ascending=[True, False, False, False],                                                                        
+      733 +            kind="mergesort",                                                                                             
+      734 +            na_position="last",                                                                                           
+      735 +        )                                                                                                                 
+      736 +        df_para_analizar["posicion"] = (                                                                                  
+      737 +            df_para_analizar.groupby("Suministro_Final", sort=False).cumcount() + 1                                       
+      738 +        )                                                                                                                 
+      739 +        # Las posiciones >1 son duplicados → marcar como Repetido X Sumi.                                                 
+      740 +        df_para_analizar.loc[df_para_analizar["posicion"] > 1, "TRAZA_CALIDAD"] = "Repetido X Sumi"                       
+      741 +        df_para_analizar = df_para_analizar.drop(columns=["prioridad_cod", "posicion"])                                   
+      742 +                                                                                                                          
+      743 +    df_final = pd.concat([df_para_analizar, df_descartes_directos],                                                       
+      744 +                         ignore_index=True, sort=False)                                                                   
+      745 +    return df_final                                                                                                       
+      746 +                                                                                                                          
+      747 +                                                                                                                          
+      748 +# =============================================================================                                           
+      749 +# Entrypoint del waterfall (estado: T#4–T#9)                                                                              
+      750 +# =============================================================================                                           
+      751 +                                                                                                                          
+      752  def ejecutar_core_para_contratista(contratista: str) -> dict | None:
+      753      """Setup del waterfall para una contratista. Devuelve mini-resumen.
+      754  
+
+● Update(src\etapa3_core.py)                                                    
+  ⎿  Added 3 lines                                        
+      804      log.info("  Ensamblando waterfall + reglas huérfano + correcciones...")
+      805      df_full = ensamblar_waterfall(df_base, df_resultados_A, df_resultados_B, df_resultados_C)
+      806                                                          
+      807 +    log.info("  Enriqueciendo (USR/FASE/precio) + dedup Repetido X Sumi...")                                              
+      808 +    df_final = enriquecer_y_deduplicar(df_full, df_usr, df_fases, df_mc)                                                  
+      809 +                                                                                                                          
+      810      def _conteo(df: pd.DataFrame) -> dict:                                                                                       
+      811          return df["TRAZA_CALIDAD"].value_counts().to_dict() if not df.empty else {}
+      812                                                                                                                                   
+                                                                                                                                          
+● Update(src\etapa3_core.py)                                                                                                                
+  ⎿  Added 4 lines, removed 1 line                                                                                                        
+      831          "cruce_C por TRAZA":        _conteo(df_resultados_C),
+      832          "huerfanos_finales":        len(df_pendientes_C),
+      833          "df_full (post-ensamblado)": len(df_full),
+      834 -        "TRAZA_CALIDAD final":      _conteo(df_full),                                                                     
+      834 +        "TRAZA_CALIDAD post-ensamblado": _conteo(df_full),                                                                
+      835 +        "df_final (post-dedup)":     len(df_final),                                                                       
+      836 +        "TRAZA_CALIDAD final":       _conteo(df_final),                                                                          
+      837 +        "USES total":                round(float(df_final["cant_USE_unitario"].fillna(0).sum()), 4),                      
+      838      }                                                                                                                            
+      839                                                                                                                                 
+      840      log.info("  Resumen:")
+
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -m src.etapa3_core 2>&1
+      | tail -50)                                         
+  ⎿  2026-04-24 10:03:04,863 INFO ================================================================================
+     2026-04-24 10:03:04,863 INFO INICIANDO PROCESO PARA: CONECTAR 
+     2026-04-24 10:03:04,864 INFO ================================================================================
+     … +18 lines (ctrl+o to expand)                                             
+  ⎿  (timeout 2m)                                                  
+                                                                   
+● pd.NA en np.where rompe. Trato COD_EPEC NaN como "no es código real" → prioridad 0:                                                       
+                                                                               
+● Update(src\etapa3_core.py)                                                                                                                
+  ⎿  Added 6 lines, removed 3 lines                                                                                                       
+      719      # ── 5. Dedup Repetido X Sumi ─────────────────────────────────────────────                                                  
+      720      if not df_para_analizar.empty:                                                                                               
+      721          # prioridad_cod=1 si COD_EPEC != "11" (Informado), sino 0.                                                               
+      722 -        # Comparamos como string para robustez (COD_EPEC puede ser Int64 o object).                                              
+      723 -        cod_epec_str = df_para_analizar["COD_EPEC"].astype("string")                                                             
+      724 -        df_para_analizar["prioridad_cod"] = np.where(cod_epec_str != "11", 1, 0)                                          
+      722 +        # Spark: `when(COD_EPEC != "11", 1).otherwise(0)` — NULL evalúa NULL → 0.                                                
+      723 +        # Pandas: fillna("11") trata NaN como "11" → prioridad 0 (mismo semántico).                                            
+      724 +        cod_epec_str = df_para_analizar["COD_EPEC"].astype("string").fillna("11")                                                
+      725 +        df_para_analizar["prioridad_cod"] = np.where(                                                                          
+      726 +            (cod_epec_str != "11").to_numpy(), 1, 0                                                                       
+      727 +        )                                                                                                                 
+      728  
+      729          # Window equivalente: orden estable con tie-breakers explícitos.
+      730          # Ascendente Suministro_Final para que groupby/cumcount sea correcto;
+
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -m src.etapa3_core 2>&1
+      | grep -E "(INICIANDO|TRAZA…)                       
+  ⎿  2026-04-24 10:03:47,295 INFO INICIANDO PROCESO PARA: CONECTAR 
+     2026-04-24 10:03:54,934 INFO   Enriqueciendo (USR/FASE/precio) + dedup Repetido X Sumi...
+     2026-04-24 10:03:55,606 INFO     cruce_A matches            35,194         
+     … +36 lines (ctrl+o to expand)                                             
+  ⎿  (timeout 2m)                                                  
+                                                                   
+● T#9 OK. Numbers que vas a contrastar contra Power BI:                                                                                     
+  - CONECTAR: 4,877 nuevos "Repetido X Sumi" detectados; USES total = 7,217.632.
+  - COOPLYF: 9 "Repetido X Sumi"; USES total = 1,009.45.                                                                                    
+  - Conservación: ambos suman exacto los del input (111,750 / 13,317). ✅                                                                 
+                                                                                                                                            
+✻ Canoodling… (13m 3s · ↓ 46.9k tokens · thought for 1s)                                                                                    
+  ⎿  ✔ 3.3f — Enriquecimiento FASE + dedup Repetido X Sumi                                                                                  
+     ◻ 3.3g — Normalización a COLS_FACT + MERGE + truncate stagings                                                                         
+     ◻ 3.5 — Panel KPIs (herramienta de validación contra Power BI)                                                                         
+     ◻ 3.4 — dim_suministros_geo + dim_calendario
+     ✔ Setup Fase 3: CLAUDE.md + ajuste workflow_fase3.md a validación KPI-only                                                             
+      … +7 completed                                                                                                                      
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ctrl+t to hide tasks                            Now using extra usage
+      | grep -E "(INICIANDO|TRAZA…)
+  ⎿  2026-04-24 10:03:47,295 INFO INICIANDO PROCESO PARA: CONECTAR
+     2026-04-24 10:03:54,934 INFO   Enriqueciendo (USR/FASE/precio) + dedup Repetido X Sumi...
+     2026-04-24 10:03:55,606 INFO     cruce_A matches            35,194
+     … +36 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● T#9 OK. Numbers que vas a contrastar contra Power BI:
+  - CONECTAR: 4,877 nuevos "Repetido X Sumi" detectados; USES total = 7,217.632.
+  - COOPLYF: 9 "Repetido X Sumi"; USES total = 1,009.45.
+  - Conservación: ambos suman exacto los del input (111,750 / 13,317). ✅
+
+● Implemento T#10 — normalización a COLS_FACT + MERGE + truncate. Por seguridad durante la migración, el truncate va a quedar opt-in (no por
+   default — se invierte cuando confirmemos que el Core está correcto).
+                                                                   
+● Update(src\etapa3_core.py)                                                          
+  ⎿  Added 5 lines, removed 1 line                                             
+       6    - T#4 Setup: carga de inputs, df_usr_pool, df_ord_ce_propia,       
+       7      df_ord_rechazo_tor, df_base, helper rank_one_by_dias.  ✅
+       8    - T#5 Cruce A: parte ↔ orden CE propia (suministro + fecha).  ✅   
+       9 -  - T#6-T#10 (Cruce B, C, ensamblado, dedup, MERGE): PENDIENTES.                                                                  
+       9 +  - T#6 Cruce B: rechazo TOR (no-CE).  ✅                                                                                  
+      10 +  - T#7 Cruce C: rescate técnico por medidor.  ✅                                                                                 
+      11 +  - T#8 Ensamblado + reglas huérfano + correcciones.  ✅                                                                          
+      12 +  - T#9 Enriquecimiento USR/FASE/precio + dedup Repetido X Sumi.  ✅                                                       
+      13 +  - T#10 Normalización a COLS_FACT + MERGE a fact + truncate stagings.  ✅                                                        
+      14  """                                                                                                                             
+      15  
+      16  from __future__ import annotations
+
+● Update(src\etapa3_core.py)                                                          
+  ⎿  Added 3 lines                                                 
+      20  import numpy as np                                                          
+      21  import pandas as pd                                      
+      22                                                                       
+      23 +from datetime import datetime, timezone                                                                                    
+      24 +                                                                                                                           
+      25  from . import config                                  
+      26 +from . import hashing                                                                                                             
+      27  from . import io_lakehouse as io
+      28                                                                                                                                    
+      29  log = logging.getLogger(__name__)                                                                                               
+                                                                                                                                            
+● Update(src\etapa3_core.py)                                                                                                              
+  ⎿  Added 107 lines, removed 1 line                               
+      756                                                          
+      757                                        
+      758  # =============================================================================
+      759 -# Entrypoint del waterfall (estado: T#4–T#9)                                                                              
+      759 +# Normalización a COLS_FACT (T#10)                                                                                        
+      760  # =============================================================================
+      761                                                                                                                                   
+      762 +def normalizar_a_fact_schema(                                                                                             
+      763 +    df_final: pd.DataFrame,                                                                                                      
+      764 +    contratista: str,                                                                                                          
+      765 +    mapa_archivos: dict[str, int],                                                                                        
+      766 +    df_dim_traza: pd.DataFrame,                                                                                           
+      767 +) -> pd.DataFrame:                                                                                                        
+      768 +    """Aplica los enriquecimientos restantes y selecciona el schema canónico COLS_FACT.                                   
+      769 +                                                                                                                          
+      770 +    Replica L.648-730 de procesar_pd_gral_refactor.py.                                                                    
+      771 +                                                                                                                          
+      772 +    Pasos:                                                                                                                
+      773 +      1. ID_ESTADO + ESTADO_PROCESO + es_pagable según TRAZA.                                                             
+      774 +      2. ID_EMPRESA según contratista (1=CONECTAR, 2=COOPLYF).                                                            
+      775 +      3. TIMESTAMP_ETL = ahora (UTC).                                                                                     
+      776 +      4. ID_ARCHIVO via lookup en mapa_archivos.                                                                          
+      777 +      5. ID_TRAZA via merge con dim_traza_calidad_bi.                                                                     
+      778 +      6. SUMINISTRO_RAW = Suministro original (string).                                                                   
+      779 +      7. ID_PARTE_HASH determinista vía hashing.id_parte_hash.                                                            
+      780 +      8. FUE_CORREGIDO = False (flag para módulo de correcciones futuro).                                                 
+      781 +      9. Select final al schema COLS_FACT.                                                                                
+      782 +    """                                                                                                                   
+      783 +    df = df_final.copy()                                                                                                  
+      784 +    id_empresa = 1 if contratista == "CONECTAR" else 2                                                                    
+      785 +                                                                                                                          
+      786 +    # 1. ID_ESTADO + ESTADO_PROCESO + es_pagable                                                                          
+      787 +    cond_estado = [                                                                                                       
+      788 +        df["TRAZA_CALIDAD"].isin(config.TRAZAS_OK),                                                                       
+      789 +        df["TRAZA_CALIDAD"].isin(config.TRAZAS_OCR),                                                                      
+      790 +        df["TRAZA_CALIDAD"].isin(["No Corresponde TOR CE", "Otro Origen"]),                                               
+      791 +    ]                                                                                                                     
+      792 +    choice_estado = [1, 2, 4]                                                                                             
+      793 +    df["ID_ESTADO"] = np.select(cond_estado, choice_estado, default=3).astype("int64")                                    
+      794 +                                                                                                                          
+      795 +    df["ESTADO_PROCESO"] = (                                                                                              
+      796 +        df["ID_ESTADO"]                                                                                                   
+      797 +        .map({1: "Aprobado", 2: "Revisión", 3: "Rechazado", 4: "Fuera de Alcance"})                                       
+      798 +        .astype("string")                                                                                                 
+      799 +    )                                                                                                                     
+      800 +    df["es_pagable"] = (df["ID_ESTADO"] == 1).astype("int64")                                                             
+      801 +                                                                                                                          
+      802 +    # 2. ID_EMPRESA                                                                                                       
+      803 +    df["ID_EMPRESA"] = id_empresa                                                                                         
+      804 +                                                                                                                          
+      805 +    # 3. TIMESTAMP_ETL — UTC explícito (CLAUDE.md / plan §3.10).                                                          
+      806 +    df["TIMESTAMP_ETL"] = pd.Timestamp(datetime.now(timezone.utc).replace(tzinfo=None))                                   
+      807 +                                                                                                                          
+      808 +    # 4. ID_ARCHIVO via mapa                                                                                              
+      809 +    df["ID_ARCHIVO"] = df["ORIGEN_ARCHIVO"].map(mapa_archivos).astype("Int64")                                            
+      810 +                                                                                                                          
+      811 +    # 5. ID_TRAZA via merge con dim_traza                                                                                 
+      812 +    df = df.merge(                                                                                                        
+      813 +        df_dim_traza[["ID_TRAZA", "DESC_TRAZA"]],                                                                         
+      814 +        left_on="TRAZA_CALIDAD", right_on="DESC_TRAZA",                                                                   
+      815 +        how="left",                                                                                                       
+      816 +    ).drop(columns=["DESC_TRAZA"], errors="ignore")                                                                       
+      817 +    df["ID_TRAZA"] = df["ID_TRAZA"].astype("Int64")                                                                       
+      818 +                                                                                                                          
+      819 +    # 6. SUMINISTRO_RAW = Suministro string original (lo que cargó el operario)                                           
+      820 +    df["SUMINISTRO_RAW"] = df["Suministro"].astype("string")                                                              
+      821 +                                                                                                                          
+      822 +    # 7. ID_PARTE_HASH determinista — clave del MERGE idempotente.                                                        
+      823 +    df["ID_PARTE_HASH"] = hashing.id_parte_hash(                                                                          
+      824 +        origen_archivo=df["ORIGEN_ARCHIVO"],                                                                              
+      825 +        srv_codigo=df["Suministro_Final"],                                                                                
+      826 +        fecha=df["Fecha_Norm"],                                                                                           
+      827 +        medidor_colocado=df["medidorColocado"],                                                                           
+      828 +        cod_tipos_mano_obra=df["codTiposManoObra"],                                                                       
+      829 +    )                                                                                                                     
+      830 +                                                                                                                          
+      831 +    # 8. FUE_CORREGIDO — flag de override de auditoría, default False.                                                    
+      832 +    df["FUE_CORREGIDO"] = False                                                                                           
+      833 +                                                                                                                          
+      834 +    # Renombres y casts finales para llegar al schema canónico.                                                           
+      835 +    df_normalizado = pd.DataFrame({                                                                                       
+      836 +        "ID_EXTERNO":         df["ID_Externo"].astype("string"),                                                          
+      837 +        "FECHA":              df["Fecha_Norm"],  # ya es datetime64[us] normalizado                                       
+      838 +        "ESTADO_PROCESO":     df["ESTADO_PROCESO"],                                                                       
+      839 +        "ID_ARCHIVO":         df["ID_ARCHIVO"],                                                                           
+      840 +        "SRV_CODIGO":         df["Suministro_Final"].astype("Int64"),                                                     
+      841 +        "SUMINISTRO_RAW":     df["SUMINISTRO_RAW"],                                                                       
+      842 +        "NRO_EQP_COLOCADO":   df["medidorColocado"].astype("float64"),                                                    
+      843 +        "NRO_EQP_RETIRADO":   df["medidorRetirado"].astype("float64"),                                                    
+      844 +        "CODIGO_CONTRATISTA": df["codTiposManoObra"].astype("string"),                                                    
+      845 +        "CODIGO_EPEC":        pd.to_numeric(df["COD_EPEC"], errors="coerce").astype("Int64"),                             
+      846 +        "ORD_NRO":            df["NUMERO_ORDEN"].astype("Int64"),                                                         
+      847 +        "ORD_FECHA_FIN":      df["ORD_FECHA_FIN"],                                                                        
+      848 +        "es_pagable":         df["es_pagable"],                                                                           
+      849 +        "ID_EMPRESA":         df["ID_EMPRESA"].astype("int64"),                                                           
+      850 +        "ID_ESTADO":          df["ID_ESTADO"],                                                                            
+      851 +        "TIMESTAMP_ETL":      df["TIMESTAMP_ETL"],                                                                        
+      852 +        "SEC_CODIGO_ORIGEN":  df["SEC_CODIGO_ORIGEN"].astype("string"),                                                   
+      853 +        "USR_ID":             df["USR_ID"].astype("Int64"),                                                               
+      854 +        "ID_TRAZA":           df["ID_TRAZA"],                                                                             
+      855 +        "ID_PARTE_HASH":      df["ID_PARTE_HASH"].astype("string"),                                                       
+      856 +        "FUE_CORREGIDO":      df["FUE_CORREGIDO"],                                                                        
+      857 +        "ORD_TIPO_DETECTADO": df["ORD_TIPO_DETECTADO"].astype("string"),                                                  
+      858 +    })                                                                                                                    
+      859 +                                                                                                                          
+      860 +    # Garantizar el orden exacto de COLS_FACT (defensa en profundidad).                                                   
+      861 +    return df_normalizado[config.COLS_FACT]                                                                               
+      862 +                                                                                                                          
+      863 +                                                                                                                          
+      864 +# =============================================================================                                           
+      865 +# Entrypoint del waterfall (estado: T#4–T#10 — completo)                                                                  
+      866 +# =============================================================================                                           
+      867 +                                                                                                                          
+      868  def ejecutar_core_para_contratista(contratista: str) -> dict | None:
+      869      """Setup del waterfall para una contratista. Devuelve mini-resumen.
+      870  
+
+● Update(src\etapa3_core.py)                                                               
+  ⎿  Added 11 lines, removed 4 lines                               
+      865  # Entrypoint del waterfall (estado: T#4–T#10 — completo) 
+      866  # =============================================================================
+      867                                                                      
+      868 -def ejecutar_core_para_contratista(contratista: str) -> dict | None:                                                      
+      869 -    """Setup del waterfall para una contratista. Devuelve mini-resumen.                                                   
+      868 +def ejecutar_core_para_contratista(                                                                                       
+      869 +    contratista: str,                                                                                                            
+      870 +    mapa_archivos: dict[str, int],                                                                                        
+      871 +    df_dim_traza: pd.DataFrame,                                                                                                  
+      872 +) -> tuple[pd.DataFrame | None, dict | None]:                                                                                  
+      873 +    """Ejecuta el waterfall completo para una contratista.                                                                       
+      874                                                                                                                                 
+      871 -    Sub-ticket T#4: solo prepara los DataFrames y reporta sus tamaños.                                                    
+      872 -    Los cruces A/B/C y el MERGE final se implementan en T#5–T#10.                                                         
+      875 +    Devuelve (df_normalizado, resumen):                                                                                   
+      876 +      - df_normalizado: DataFrame con schema COLS_FACT, listo para MERGE.                                                 
+      877 +      - resumen: dict de métricas (counts por TRAZA, USES total, etc.).                                                   
+      878 +                                                                                                                          
+      879 +    Si la tabla de staging no existe o está vacía → (None, None).                                                         
+      880      """
+      881      log.info("=" * 80)
+      882      log.info("INICIANDO PROCESO PARA: %s", contratista)
+
+● Update(src\etapa3_core.py)                                        
+  ⎿  Added 2 lines, removed 2 lines                                
+      885      tabla_input = f"pd_{contratista.lower()}_aux"       
+      886      if not io.table_exists(tabla_input, capa="stage"):  
+      887          log.warning("Tabla %s no existe. Saltando.", tabla_input)   
+      888 -        return None                                                                                                       
+      888 +        return None, None                                                                                                 
+      889                                                       
+      890      df_pd = io.read_table(tabla_input, capa="stage")                                                                             
+      891      if df_pd.empty:
+      892          log.warning("Tabla %s vacía. Saltando.", tabla_input)                                                                    
+      893 -        return None                                                                                                            
+      893 +        return None, None                                                                                                        
+      894                                                                                                                                 
+      895      log.info("  Cargando maestros y seeds...")
+      896      df_mc       = _cargar_mapeo_codigos(contratista)
+
+● Update(src\etapa3_core.py)                                        
+  ⎿  Added 3 lines                                                 
+      930      log.info("  Enriqueciendo (USR/FASE/precio) + dedup Repetido X Sumi...")
+      931      df_final = enriquecer_y_deduplicar(df_full, df_usr, df_fases, df_mc)
+      932                                                                      
+      933 +    log.info("  Normalizando a schema COLS_FACT...")                                                                      
+      934 +    df_normalizado = normalizar_a_fact_schema(df_final, contratista, mapa_archivos, df_dim_traza)                         
+      935 +                                                                                                                          
+      936      def _conteo(df: pd.DataFrame) -> dict:                                                                                       
+      937          return df["TRAZA_CALIDAD"].value_counts().to_dict() if not df.empty else {}
+      938                                                                                                                                   
+                                                                                                                                          
+● Update(src\etapa3_core.py)                                                                                                                
+  ⎿  Added 3 lines                                                                                                                        
+      961          "df_final (post-dedup)":     len(df_final),     
+      962          "TRAZA_CALIDAD final":       _conteo(df_final),
+      963          "USES total":                round(float(df_final["cant_USE_unitario"].fillna(0).sum()), 4),
+      964 +        "df_normalizado":            len(df_normalizado),                                                                 
+      965 +        "ID_ESTADO breakdown":       df_normalizado["ID_ESTADO"].value_counts().to_dict(),                                
+      966 +        "Aprobados (ID_ESTADO=1)":   int((df_normalizado["ID_ESTADO"] == 1).sum()),                                       
+      967      }                                                                                                                            
+      968  
+      969      log.info("  Resumen:")                                                                                                       
+                                                                                                                                          
+● Update(src\etapa3_core.py)                                        
+  ⎿  Added 66 lines, removed 7 lines                               
+       972              continue                                   
+       973          if isinstance(v, dict):      
+       974              log.info("    %-22s", k)                               
+       975 -            for traza, n in sorted(v.items(), key=lambda kv: -kv[1]):                                                    
+       976 -                log.info("      %-35s %s", traza, f"{n:>10,}")                                                           
+       977 -        else:                                                                                                            
+       975 +            for traza, n in sorted(v.items(), key=lambda kv: -kv[1] if isinstance(kv[1], (int, float)) else 0):                 
+       976 +                log.info("      %-35s %s", str(traza), f"{n:>10,}" if isinstance(n, (int, float)) else str(n))           
+       977 +        elif isinstance(v, (int, float)):                                                                                       
+       978              log.info("    %-22s %s", k, f"{v:>10,}")                                                                          
+       979 +        else:                                                                                                            
+       980 +            log.info("    %-22s %s", k, v)                                                                               
+       981  
+       980 -    return resumen                                                                                                       
+       982 +    return df_normalizado, resumen                                                                                       
+       983  
+       984  
+       983 -def run() -> dict:                                                                                                       
+       984 -    """Corre el setup del waterfall para todas las contratistas configuradas."""                                         
+       985 +def run(truncate_stagings: bool = False) -> dict:                                                                        
+       986 +    """Orquesta Fase 3 completa: dims BI + waterfall por contratista + MERGE.                                            
+       987 +                                                                                                                         
+       988 +    `truncate_stagings`: si True, vacía pd_*_aux después del MERGE (matches                                              
+       989 +    Fabric H-07). Default False para safety durante la migración —                                                       
+       990 +    permite re-correr el Core sin re-ejecutar el adapter.                                                                
+       991 +    """                                                                                                                  
+       992      config.ensure_layout()
+       993 +                                                                                                                         
+       994 +    # ── Generar dimensiones BI (T#1+T#2+T#3) ──────────────────────────────                                             
+       995 +    log.info("=" * 80)                                                                                                   
+       996 +    log.info("FASE 3 — Generando dimensiones BI...")                                                                     
+       997 +    log.info("=" * 80)                                                                                                   
+       998 +    from . import etapa3_dims_bi                                                                                         
+       999 +    dim_metricas = etapa3_dims_bi.run()                                                                                  
+      1000 +    log.info("Dims BI: %s", dim_metricas)                                                                                
+      1001 +                                                                                                                         
+      1002 +    # mapa_archivos para normalizar ORIGEN_ARCHIVO → ID_ARCHIVO                                                          
+      1003 +    if io.table_exists("dim_archivo_bi", capa="dim"):                                                                    
+      1004 +        df_dim_arch = io.read_table("dim_archivo_bi", capa="dim")                                                        
+      1005 +        mapa_archivos = dict(zip(df_dim_arch["NOMBRE_ARCHIVO"], df_dim_arch["ID_ARCHIVO"].astype(int)))                  
+      1006 +    else:                                                                                                                
+      1007 +        mapa_archivos = {}                                                                                               
+      1008 +                                                                                                                         
+      1009 +    # dim_traza para asignar ID_TRAZA en el normalizador                                                                 
+      1010 +    df_dim_traza = io.read_table("dim_traza_calidad_bi", capa="dim")                                                     
+      1011 +                                                                                                                         
+      1012 +    # ── Waterfall por contratista ─────────────────────────────────────────                                             
+      1013      resultados: dict[str, dict | None] = {}
+      1014 +    df_lote_completo: list[pd.DataFrame] = []                                                                            
+      1015 +    stagings_a_limpiar: list[str] = []                                                                                   
+      1016 +                                                                                                                         
+      1017      for contratista in config.LISTA_CONTRATISTAS:
+       988 -        resultados[contratista] = ejecutar_core_para_contratista(contratista)                                            
+      1018 +        df_normalizado, resumen = ejecutar_core_para_contratista(                                                        
+      1019 +            contratista, mapa_archivos, df_dim_traza,                                                                    
+      1020 +        )                                                                                                                
+      1021 +        resultados[contratista] = resumen                                                                                
+      1022 +        if df_normalizado is not None:                                                                                   
+      1023 +            df_lote_completo.append(df_normalizado)                                                                      
+      1024 +            stagings_a_limpiar.append(f"pd_{contratista.lower()}_aux")                                                   
+      1025 +                                                                                                                         
+      1026 +    # ── MERGE único a la fact table ───────────────────────────────────────                                             
+      1027 +    if df_lote_completo:                                                                                                 
+      1028 +        df_lote = pd.concat(df_lote_completo, ignore_index=True, sort=False)                                             
+      1029 +        log.info("=" * 80)                                                                                               
+      1030 +        log.info("MERGE de %d filas a fact_partes_diarios_full por ID_PARTE_HASH...",                                    
+      1031 +                 len(df_lote))                                                                                           
+      1032 +        log.info("=" * 80)                                                                                               
+      1033 +        io.merge_table(df_lote, "fact_partes_diarios_full", capa="gold",                                                 
+      1034 +                       key="ID_PARTE_HASH")                                                                              
+      1035 +        log.info("MERGE OK.")                                                                                            
+      1036 +                                                                                                                         
+      1037 +        # Truncate stagings DESPUÉS del MERGE [H-07]. Solo si el caller lo pide.                                         
+      1038 +        if truncate_stagings:                                                                                            
+      1039 +            for tabla_stg in stagings_a_limpiar:                                                                         
+      1040 +                log.info("Truncando staging %s...", tabla_stg)                                                           
+      1041 +                io.truncate_table(tabla_stg, capa="stage")                                                               
+      1042 +        else:                                                                                                            
+      1043 +            log.info("Stagings PRESERVADOS (truncate_stagings=False). Para vaciarlos: "                                  
+      1044 +                     "io.truncate_table(...) manual o run(truncate_stagings=True).")                                     
+      1045 +    else:                                                                                                                
+      1046 +        log.warning("No hubo datos en el lote. No se realizaron cambios en la fact table.")                              
+      1047 +                                                                                                                         
+      1048      return resultados
+      1049  
+      1050  
+
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -m src.etapa3_core 2>&1
+      | tail -60)                                                  
+  ⎿    df_resultados = pd.concat(                                  
+     2026-04-24 10:07:33,690 INFO   Enriqueciendo (USR/FASE/precio) + dedup Repetido X Sumi...
+     2026-04-24 10:07:34,043 INFO   Normalizando a schema COLS_FACT...         
+     … +54 lines (ctrl+o to expand)                                 
+  ⎿  (timeout 2m)                                                  
+                                                                   
+● Waterfall completo end-to-end: 125,067 filas mergeadas a gold/fact_partes_diarios_full.parquet. Verifico el archivo:                      
+                                                                               
+● Bash(ls -lh "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version/data/gold/" 2>&1; echo "---"; cd                     
+      "D:/Usuarios/pberecibar/Desktop/backup pyspark…)                                                                                    
+  ⎿  total 11M                                                                                                                              
+     -rw-r--r-- 1 pberecibar 1049089 11M Apr 24 10:07 fact_partes_diarios_full.parquet                                                      
+     ---                                                                                                                                    
+     … +17 lines (ctrl+o to expand)                                                                                                         
+                                                                                                                                            
+● ⚠ Detecté algo importante: 3,100 ID_PARTE_HASH duplicados. Veo si son partes realmente repetidos o un bug del hash:
+                                                                                                                                            
+● Bash(cd "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version" && "../venv/Scripts/python.exe" -c "                  
+      import pandas as pd…)                                                                                                                 
+  ⎿  Filas duplicadas (incl. originales): 6185                                                                                            
+     Hashes  nicos duplicados: 3085                                                                                                         
+     … +11 lines (ctrl+o to expand)                                                  
+                                                                                                                                            
+● Los duplicados son partes que el operario cargó dos veces idénticos en el Excel — ID_EXTERNO y todos los campos coinciden exactos. Es data
+   quality del input, no bug. Pero io.merge_table debería deduplicar para matchear el whenMatchedUpdateAll de Spark (last-wins). Lo arreglo:
+                                                                                                                                            
+● Update(src\io_lakehouse.py)                                                                                                             
+  ⎿  Added 10 lines, removed 3 lines                                                                                                        
+      128      capa: Capa,                                                                                                                
+      129      key: str,                                                                                                                    
+      130  ) -> Path:                                                          
+      131 -    """Upsert sobre una tabla por clave única.                                                                                   
+      131 +    """Upsert sobre una tabla por clave única (semántica `whenMatchedUpdateAll`).                                              
+      132                                                                                                                                   
+      133 -    Equivale al `DeltaTable.merge(...whenMatchedUpdateAll().whenNotMatchedInsertAll())`                                          
+      134 -    del script original: filas con `key` existente se pisan, nuevas se insertan.                                          
+      133 +    - Si en `df_new` hay filas duplicadas por `key`, se conserva la **última**                                                   
+      134 +      (matchea el "last wins" del MERGE Delta cuando el source tiene dups).                                                    
+      135 +    - Si la fila ya existe en la tabla destino con la misma `key`, se pisa.                                                      
+      136 +    - Si no existe, se inserta.                                                                                                
+      137      """
+      138      if key not in df_new.columns:
+      139          raise KeyError(f"La clave {key!r} no está en df_new")
+      140  
+      141 +    # Dedup del source antes del merge: Spark `whenMatchedUpdateAll` con                                                  
+      142 +    # source duplicado es undefined (algunas builds lanzan error). El `keep="last"`                                       
+      143 +    # garantiza determinismo y refleja la intención de "el último parte cargado gana".                                    
+      144 +    df_new = df_new.drop_duplicates(subset=[key], keep="last")                                                            
+      145 +                                                                                                                          
+      146      ruta = _ruta(nombre, capa)
+      147      if ruta.exists():
+      148          df_old = pd.read_parquet(ruta)
+
+● Reviso si la fact ahora queda limpia. Borro la actual y reejecuto:                  
+                                                                   
+● Bash(rm "D:/Usuarios/pberecibar/Desktop/backup pyspark - flujo pd/python-version/data/gold/fact_partes_diarios_full.parquet" 2>&1; cd
+      "D:/Usuarios/pberecibar/Desktop…)                            
+  ⎿  2026-04-24 10:09:23,158 INFO MERGE de 125067 filas a fact_partes_diarios_full por ID_PARTE_HASH...
+     2026-04-24 10:09:23,158 INFO ================================================================================                
+     2026-04-24 10:09:23,498 INFO MERGE OK.                                           
+     … +24 lines (ctrl+o to expand)                                                                                                         
+  ⎿  (timeout 2m)                                                                                                                           
+                                                                   
+● Fact table queda en 121,967 filas únicas por ID_PARTE_HASH. ✅                                                                            
+                                                                                                                                          
+● 🎉 Sub-bloque 3.3 completo (T#4 → T#10). El Core Waterfall corre end-to-end:                                                              
+                                                                                                                                          
+  Adapter input → df_base → Cruce A → Cruce B → Cruce C → Ensamblado                                                                        
+                                                           + reglas huérfano                                                                
+                                                           + correcciones                                                                   
+                                                           → Enriquecimiento                                                                
+                                                           + dedup Repetido X Sumi                                                          
+                                                           → Normalización COLS_FACT                                                        
+                                                           → MERGE atómico fact                                                             
+                                                                                                                                            
+  KPIs del waterfall (estos son los que vas a contrastar contra tu Power BI):                                                               
+                                                                                                                                          
+  ┌────────────────────────────────┬───────────┬──────────┬───────────┐
+  │            Métrica             │ CONECTAR  │ COOPLYF  │   TOTAL   │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ Partes input                   │   111,750 │   13,317 │   125,067 │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ Aprobados (ID_ESTADO=1)        │    27,423 │   13,123 │    40,546 │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ Revisión OCR (ID_ESTADO=2)     │        13 │        0 │        13 │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ Rechazado (ID_ESTADO=3)        │     8,900 │      161 │     9,061 │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ Fuera de Alcance (ID_ESTADO=4) │    75,414 │       33 │    75,447 │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ USES total                     │ 7,217.632 │ 1,009.45 │ 8,227.082 │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ Repetido X Sumi                │     4,877 │        9 │     4,886 │
+  ├────────────────────────────────┼───────────┼──────────┼───────────┤
+  │ Sin Orden Asociada             │     4,023 │      152 │     4,175 │
+  └────────────────────────────────┴───────────┴──────────┴───────────┘
+
+  Bugs reales que arreglé en el camino:
+  1. OOM al cargar dim_ord (5.7M × 58 cols) → io.read_table(columns=...) proyecta desde Parquet.
+  2. Fechas sentinel del año 2501 en dim_ord → clip a [2000, 2100] con resolución [us].
+  3. pd.NA rompiendo np.where → fillna("11") (matchea semántica Spark de NULL → 0).
+  4. Duplicados en source rompían idempotencia del MERGE → merge_table ahora deduplica keep="last".
+
+  Próximo paso natural: T#11 — Panel KPIs. Es la pieza más importante que queda porque es la herramienta para que vos compares estos números
+   contra tu Power BI. ¿Sigo?
+
+✻ Brewed for 18m 25s                                     
+                                                                   
+❯ Hay una diferencia muy chica, a grandes razgos estan muy parecidos. El tema es que no puedo tomar los valores del power como fuente de    
+  verdad absoluta, ya que considero que el codigo de pyspark no era del todo eficiente y se que tenia algunos errores (por ejemplo, tomaba  
+  los partes diarios con codigo distintos de 11 con resultado "IN", es decir informados, como aprobados. Lo cual es un error ya que es un   
+  trabajo que no se ejecuto, sino que se informo, por mas que tenga codigo distinto de 11, propio de los informados). Como estos errores    
+  pueden haber otros, por eso viendo que a grandes rasgos los numeros coinciden, confirmo que el resultado que obtuviste en los kpis estan  
+  bien. Me gustaria dejar todo el procesamiento listo (backend) para luego relizar el front utilizando claude design. Por lo que la capa    
+  que sirve los datos debe contemplar esto, pero no quiero saltearme pasos, simplemente contemplarlo para seguir adelante. Continua por     
+  favor                                                                                                                                     
+  ⎿  You've hit your limit · resets 12:40pm (America/Buenos_Aires)                                                                          
+     /upgrade to increase your usage limit.                                                                                                 
+                                                                                                                                            
+❯ /rate-limit-options                                                                                                                       
+                                                                                                                                            
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  What do you want to do?                                                                                                                   
+                                                                                                                                            
+  ❯ 1. Stop and wait for limit to reset                                                                                                     
+    2. Upgrade your plan                                                                                                                    
+    3. Upgrade to Team plan                                                                                                                 
+                                                                                                                                            
+  Enter to confirm · Esc to cancel                                                                                                          
+                                                                                                                                            
+                                         

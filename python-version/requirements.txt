@@ -1,0 +1,19 @@
+pandas>=2.2,<3.0
+numpy>=1.26,<3.0
+pyarrow>=15.0
+openpyxl>=3.1
+python-dateutil>=2.9
+
+# Oracle (etapa 0 — extracción de seeds desde SIGEC PRODEBS_SEE).
+# Requiere Instant Client en disco (ej. C:\Oracle\instantclient_23_6).
+oracledb>=3.4,<4.0
+python-dotenv>=1.0,<2.0
+
+# Dev / Tests
+pytest>=8.3.4
+
+# API Web
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
