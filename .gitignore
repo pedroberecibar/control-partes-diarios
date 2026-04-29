@@ -1,0 +1,40 @@
+# Entornos virtuales
+venv/
+env/
+
+# Dependencias de Node (Claude Code)
+node_modules/
+package-lock.json
+
+# Archivos de entorno y credenciales (¡SÚPER IMPORTANTE!)
+.env
+.env.*
+
+# Caché de Python
+__pycache__/
+*.pyc
+
+# Datos locales (No subir los Excels ni el Datalake local a GitHub)
+python-version/data/
+python-version/docs/ejemplo_consulta_VM_GEOREFERENCIA/
+*.parquet
+*.xlsx
+*.xls
+*.csv
+*.json
+!package.json
+!package-lock.json
+!jsconfig.json
+!tsconfig.json
+
+# Logs
+*.log
+
+# Herramientas locales
+tools/
+
+# Frontend dependencies
+node_modules/
+frontend-app/node_modules/
+# Added by code-review-graph
+.code-review-graph/
