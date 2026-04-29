@@ -36,3 +36,5 @@ tools/
 # Frontend dependencies
 node_modules/
 frontend-app/node_modules/
+# Added by code-review-graph
+.code-review-graph/

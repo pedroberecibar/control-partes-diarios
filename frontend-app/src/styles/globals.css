@@ -1,0 +1,61 @@
+/* Globals — animaciones, scrollbar, focus, reset.
+   Los tokens del design system viven en tokens.css. */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import './tokens.css';
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; overflow: hidden; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-green-800);
+  color: var(--color-neutral-900);
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-neutral-200); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-neutral-300); }
+
+input, select, textarea, button { font-family: inherit; }
+textarea { resize: vertical; }
+
+/* Loading skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #eaeeec 25%, #f5f7f6 50%, #eaeeec 75%);
+  background-size: 600px 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+}
+
+/* Toast slide-in */
+@keyframes slideInRight {
+  from { transform: translateX(110%); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+.toast { animation: slideInRight 0.2s ease; }
+
+/* Modal entrance */
+@keyframes modalIn {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+/* Photo badge pop */
+@keyframes popIn {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+/* Focus visible */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-green-500);
+  outline-offset: 1px;
+}

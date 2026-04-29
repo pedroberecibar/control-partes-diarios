@@ -1,3 +1,6 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Entry point de estilos. El prototipo usa inline styles + tokens CSS
+   + Google Fonts; Tailwind queda fuera del bundle por ahora.
+   Si se necesita Tailwind a futuro, restaurar las directivas y revisar
+   que el reset no rompa el look del prototipo. */
+
+@import './styles/globals.css';

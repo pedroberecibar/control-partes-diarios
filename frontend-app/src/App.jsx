@@ -1,35 +1,89 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useState } from 'react';
+import { Sidebar } from './components/layout/Sidebar';
+import { Toast } from './components/Toast';
+import { TopBar } from './components/layout/TopBar';
+import { MODULE_DEFAULT_SCREEN, ROLE_ACCESS, ROLE_LABELS, SCREEN_META, SCREEN_TO_MODULE } from './data/nav';
+import { BandejaAuditoria } from './pages/BandejaAuditoria';
+import { CentroExports } from './pages/CentroExports';
+import { DashboardCalidad } from './pages/DashboardCalidad';
+import { DashboardEvolucion } from './pages/DashboardEvolucion';
+import { DashboardMapa } from './pages/DashboardMapa';
+import { DashboardOperarios } from './pages/DashboardOperarios';
+import { DetallePartes } from './pages/DetallePartes';
+import { ListaLotes } from './pages/ListaLotes';
+import { MapeoCodigosAdmin } from './pages/MapeoCodigosAdmin';
+import { SubidaArchivos } from './pages/SubidaArchivos';
+import { UsuariosRolesAdmin } from './pages/UsuariosRolesAdmin';
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [screen, setScreen]           = useState('bandeja');
+  const [role, setRole]               = useState('auditor');
+  const [collapsed, setCollapsed]     = useState(false);
+  const [activeParte, setActiveParte] = useState(null);
+  const [toasts, setToasts]           = useState([]);
+
+  const meta = SCREEN_META[screen] || { title: screen, subtitle: '' };
+
+  function addToast(msg, type = 'info') {
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
+  }
+  function removeToast(id) { setToasts((t) => t.filter((x) => x.id !== id)); }
+
+  function handleNav(s) {
+    setScreen(s);
+    if (s !== 'detalle') setActiveParte(null);
+  }
+
+  function handleOpenDetalle(parte) {
+    setActiveParte(parte);
+    setScreen('detalle');
+  }
+
+  function handleRoleChange(newRole) {
+    setRole(newRole);
+    // Si la pantalla actual no es accesible para el nuevo rol, redirigir.
+    const allowed = ROLE_ACCESS[newRole] || [];
+    const curModule = SCREEN_TO_MODULE[screen];
+    if (curModule && !allowed.includes(curModule)) {
+      const firstModule = allowed[0];
+      setScreen(MODULE_DEFAULT_SCREEN[firstModule] || 'lotes');
+    }
+    addToast(`Rol cambiado a ${ROLE_LABELS[newRole]}`, 'info');
+  }
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+      <Sidebar
+        activeScreen={screen}
+        onNav={handleNav}
+        role={role}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((v) => !v)}
+      />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f5f7f6' }}>
+        <TopBar
+          title={meta.title}
+          subtitle={meta.subtitle}
+          role={role}
+          onRoleChange={handleRoleChange}
+        />
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {screen === 'bandeja'    && <BandejaAuditoria onOpenDetalle={handleOpenDetalle} />}
+          {screen === 'detalle'    && <DetallePartes parte={activeParte} onBack={() => setScreen('bandeja')} />}
+          {screen === 'lotes'      && <ListaLotes onSubir={() => setScreen('subida')} />}
+          {screen === 'subida'     && <SubidaArchivos onBack={() => setScreen('lotes')} />}
+          {screen === 'calidad'    && <DashboardCalidad />}
+          {screen === 'operarios'  && <DashboardOperarios />}
+          {screen === 'mapa'       && <DashboardMapa />}
+          {screen === 'evolución'  && <DashboardEvolucion />}
+          {screen === 'exports'    && <CentroExports />}
+          {screen === 'mapeo'      && <MapeoCodigosAdmin />}
+          {screen === 'usuarios'   && <UsuariosRolesAdmin />}
+        </div>
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+      <Toast toasts={toasts} onRemove={removeToast} />
+    </div>
+  );
 }
-
-export default App
