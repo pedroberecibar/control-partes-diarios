@@ -1,5 +1,11 @@
 import { useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
+import { crearLote } from '../api/lotesApi';
+
+// Temporary mapping — must match seeded contratista IDs in the DB.
+// If they differ, update these values after checking `SELECT id, nombre FROM contratistas`.
+const CONTRATISTA_IDS = { CONECTAR: 1, COOPLYF: 2 };
+const USUARIO_ID_DEFAULT = 1; // hardcoded until auth context is wired
 
 const PREVIEW_ROWS = [
   { sumi: '412881', operario: 'García J.',     fecha: '01/04/2025', med_ret: 'M74829103', med_col: 'M74829200', cod_epec: '1003', ord_nro: 'CE-482301', obs: 'Cambio prog.' },
@@ -9,45 +15,50 @@ const PREVIEW_ROWS = [
   { sumi: '811093', operario: 'Torres R.',     fecha: '01/04/2025', med_ret: 'M90231177', med_col: 'M90231300', cod_epec: '1002', ord_nro: 'CE-711209', obs: '' },
 ];
 
-const ERRORES_VALIDACION = [
-  { fila: 3,  col: 'ORD_NRO',     tipo: 'Campo vacío',      msg: 'ORD_NRO es requerido para COD_EPEC 1003/1004. Fila ignorada.' },
-  { fila: 14, col: 'FECHA_PARTE', tipo: 'Formato inválido', msg: 'Fecha "1/4/25" no cumple formato DD/MM/YYYY.' },
-  { fila: 27, col: 'MEDIDOR_RET', tipo: 'Tipo inválido',    msg: 'Valor "ABC-12345" no es un número de medidor válido.' },
-];
-
 export function SubidaArchivos({ onBack }) {
-  const [dragOver, setDragOver] = useState(false);
-  const [files, setFiles] = useState([]);
-  const [contratista, setContratista] = useState('CONECTAR');
-  const [step, setStep] = useState('drop'); // drop | preview | validating | result
-  const [validProgress, setValidProgress] = useState(0);
+  const [dragOver, setDragOver]           = useState(false);
+  const [files, setFiles]                 = useState([]);
+  const [contratista, setContratista]     = useState('CONECTAR');
+  const [step, setStep]                   = useState('drop'); // drop | preview | uploading | result | error
+  const [uploadResult, setUploadResult]   = useState(null);
+  const [uploadError, setUploadError]     = useState(null);
   const fileInputRef = useRef();
 
   function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
-    const droppedFiles = Array.from(e.dataTransfer.files).filter((f) => f.name.match(/\.(xlsx|xls|csv)$/i));
-    if (droppedFiles.length) {
-      setFiles(droppedFiles);
-      setStep('preview');
-    }
+    const dropped = Array.from(e.dataTransfer.files).filter((f) => f.name.match(/\.(xlsx|xls|csv)$/i));
+    if (dropped.length) { setFiles(dropped); setStep('preview'); }
   }
   function handleFileInput(e) {
     const chosen = Array.from(e.target.files).filter((f) => f.name.match(/\.(xlsx|xls|csv)$/i));
-    if (chosen.length) {
-      setFiles(chosen);
-      setStep('preview');
+    if (chosen.length) { setFiles(chosen); setStep('preview'); }
+  }
+
+  async function handleUpload() {
+    if (!files.length) return;
+    setStep('uploading');
+    setUploadResult(null);
+    setUploadError(null);
+    try {
+      const lote = await crearLote(
+        files[0],
+        CONTRATISTA_IDS[contratista] ?? 1,
+        USUARIO_ID_DEFAULT,
+      );
+      setUploadResult(lote);
+      setStep('result');
+    } catch (err) {
+      setUploadError(err.message || 'Error desconocido al subir el archivo.');
+      setStep('error');
     }
   }
-  function handleValidate() {
-    setStep('validating');
-    setValidProgress(0);
-    const interval = setInterval(() => {
-      setValidProgress((p) => {
-        if (p >= 100) { clearInterval(interval); setStep('result'); return 100; }
-        return p + 8;
-      });
-    }, 120);
+
+  function resetFlow() {
+    setFiles([]);
+    setUploadResult(null);
+    setUploadError(null);
+    setStep('drop');
   }
 
   const sS = {
@@ -81,11 +92,9 @@ export function SubidaArchivos({ onBack }) {
     th: { padding: '7px 10px', textAlign: 'left', background: '#124e2f', color: 'white', fontWeight: 600, fontSize: 10.5, letterSpacing: '0.04em', whiteSpace: 'nowrap' },
     td: { padding: '6px 10px', borderBottom: '1px solid #f0f3f1', color: '#2f3733', whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace" },
     fileChip: { display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#edf5f0', border: '1px solid #a8d9c0', borderRadius: 4, fontSize: 12, color: '#124e2f', fontWeight: 500 },
-    progressBar: { height: 6, background: '#eaeeec', borderRadius: 3, overflow: 'hidden', marginTop: 8 },
-    progressFill: { height: '100%', background: '#124e2f', borderRadius: 3, transition: 'width 0.12s' },
-    errorRow: { display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid #fde8e8', alignItems: 'flex-start' },
     btnPrimary: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 18px', border: 'none', borderRadius: 4, background: '#124e2f', fontSize: 12.5, fontWeight: 600, color: 'white', cursor: 'pointer' },
     btnSecondary: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', border: '1px solid #d5ddd9', borderRadius: 4, background: 'white', fontSize: 12.5, fontWeight: 600, color: '#4a5550', cursor: 'pointer' },
+    mono: { fontFamily: "'JetBrains Mono', monospace" },
   };
 
   return (
@@ -100,6 +109,7 @@ export function SubidaArchivos({ onBack }) {
         </div>
       </div>
 
+      {/* ── Step: selección de archivo ────────────────────────── */}
       {step === 'drop' && (
         <div style={sS.card}>
           <div style={sS.cardBody}>
@@ -144,13 +154,14 @@ export function SubidaArchivos({ onBack }) {
         </div>
       )}
 
+      {/* ── Step: vista previa ────────────────────────────────── */}
       {step === 'preview' && (
         <>
           <div style={sS.card}>
             <div style={sS.cardHeader}>
               <Icon name="file-text" size={14} color="#6b7772" />
               <span style={sS.cardTitle}>Archivos seleccionados</span>
-              <button style={{ ...sS.btnSecondary, fontSize: 11 }} onClick={() => setStep('drop')}>Cambiar</button>
+              <button style={{ ...sS.btnSecondary, fontSize: 11 }} onClick={resetFlow}>Cambiar</button>
             </div>
             <div style={sS.cardBody}>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -161,13 +172,6 @@ export function SubidaArchivos({ onBack }) {
                     <span style={{ color: '#8f9c97', fontWeight: 400, fontSize: 11 }}>({(f.size / 1024).toFixed(0)} KB)</span>
                   </div>
                 ))}
-                {files.length === 0 && (
-                  <div style={sS.fileChip}>
-                    <Icon name="file-text" size={13} color="#124e2f" />
-                    CONECTAR_Partes_Abril_W1.xlsx
-                    <span style={{ color: '#8f9c97', fontWeight: 400, fontSize: 11 }}>(218 KB)</span>
-                  </div>
-                )}
               </div>
               <div style={{ ...sS.selectorRow, marginBottom: 0 }}>
                 <span style={sS.selectorLabel}>Contratista</span>
@@ -189,7 +193,7 @@ export function SubidaArchivos({ onBack }) {
           <div style={sS.card}>
             <div style={sS.cardHeader}>
               <Icon name="eye" size={14} color="#6b7772" />
-              <span style={sS.cardTitle}>Vista previa — primeras 5 filas</span>
+              <span style={sS.cardTitle}>Vista previa — primeras 5 filas (referencia)</span>
               <span style={{ fontSize: 10.5, color: '#8f9c97' }}>Solo lectura</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
@@ -222,98 +226,92 @@ export function SubidaArchivos({ onBack }) {
           </div>
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <button style={sS.btnSecondary} onClick={() => { setFiles([]); setStep('drop'); }}>
-              Cancelar
-            </button>
-            <button style={sS.btnPrimary} onClick={handleValidate}>
-              <Icon name="check-circle" size={14} /> Validar y Subir
+            <button style={sS.btnSecondary} onClick={resetFlow}>Cancelar</button>
+            <button style={sS.btnPrimary} onClick={handleUpload}>
+              <Icon name="upload" size={14} /> Subir al servidor
             </button>
           </div>
         </>
       )}
 
-      {step === 'validating' && (
+      {/* ── Step: subiendo ───────────────────────────────────── */}
+      {step === 'uploading' && (
         <div style={sS.card}>
           <div style={sS.cardBody}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <Icon name="loader" size={20} color="#124e2f" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <Icon name="loader" size={22} color="#124e2f" />
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: '#2f3733' }}>Validando archivo…</div>
-                <div style={{ fontSize: 11.5, color: '#8f9c97', marginTop: 2 }}>
-                  Verificando esquema, tipos y reglas de negocio
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#2f3733' }}>
+                  Subiendo {files[0]?.name}…
+                </div>
+                <div style={{ fontSize: 11.5, color: '#8f9c97', marginTop: 3 }}>
+                  Enviando al backend · Contratista: {contratista}
                 </div>
               </div>
-              <span style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 600, color: '#124e2f' }}>
-                {validProgress}%
-              </span>
-            </div>
-            <div style={sS.progressBar}>
-              <div style={{ ...sS.progressFill, width: `${validProgress}%` }} />
-            </div>
-            <div style={{ marginTop: 12, fontSize: 11.5, color: '#8f9c97' }}>
-              {validProgress < 30
-                ? 'Leyendo estructura del archivo…'
-                : validProgress < 60
-                ? 'Validando tipos y formatos…'
-                : validProgress < 90
-                ? 'Verificando reglas de negocio…'
-                : 'Finalizando…'}
             </div>
           </div>
         </div>
       )}
 
-      {step === 'result' && (
+      {/* ── Step: resultado exitoso ───────────────────────────── */}
+      {step === 'result' && uploadResult && (
         <>
           <div style={{ ...sS.card, border: '1px solid #a8d9c0' }}>
             <div style={{ ...sS.cardHeader, background: '#edf5f0', borderBottom: '1px solid #a8d9c0' }}>
               <Icon name="check-circle" size={14} color="#1d8348" />
-              <span style={{ ...sS.cardTitle, color: '#155a2e' }}>Validación completada — 3 advertencias</span>
+              <span style={{ ...sS.cardTitle, color: '#155a2e' }}>
+                Lote creado — procesamiento iniciado en background
+              </span>
             </div>
             <div style={sS.cardBody}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
-                {[['Filas leídas', '312'], ['OK', '309'], ['Advertencias', '3'], ['Errores fatales', '0']].map(([l, v]) => (
-                  <div key={l} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: l === 'Errores fatales' ? '#8f9c97' : l === 'Advertencias' ? '#e6910a' : '#155a2e' }}>
-                      {v}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: '#8f9c97', marginTop: 2 }}>{l}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+                {[
+                  ['ID Lote', `#${uploadResult.id}`],
+                  ['Archivo', uploadResult.nombre_archivo],
+                  ['Estado inicial', uploadResult.estado],
+                ].map(([l, v]) => (
+                  <div key={l}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#8f9c97', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{l}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#111614', ...sS.mono }}>{v}</div>
                   </div>
                 ))}
+              </div>
+              <div style={{ marginTop: 12, padding: '8px 12px', background: '#fff3cd', border: '1px solid #f5d56a', borderRadius: 4, fontSize: 11.5, color: '#7a4a00' }}>
+                <strong>Nota:</strong> El worker de procesamiento corre de forma asíncrona. El estado pasará de <code>RECIBIDO</code> a <code>PROCESANDO</code> → <code>PROCESADO_OK</code> (o <code>ERROR</code>). Consultá la Lista de Lotes para el estado final.
               </div>
             </div>
           </div>
 
-          <div style={sS.card}>
-            <div style={sS.cardHeader}>
-              <Icon name="alert-triangle" size={14} color="#e6910a" />
-              <span style={sS.cardTitle}>Advertencias detectadas (no bloquean)</span>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button style={sS.btnSecondary} onClick={resetFlow}>
+              <Icon name="upload" size={13} /> Subir otro archivo
+            </button>
+            <button style={sS.btnPrimary} onClick={onBack}>
+              <Icon name="list" size={13} /> Ver Lista de Lotes
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── Step: error ───────────────────────────────────────── */}
+      {step === 'error' && (
+        <>
+          <div style={{ ...sS.card, border: '1px solid #f5b7b1' }}>
+            <div style={{ ...sS.cardHeader, background: '#fde8e8', borderBottom: '1px solid #f5b7b1' }}>
+              <Icon name="x-circle" size={14} color="#c0392b" />
+              <span style={{ ...sS.cardTitle, color: '#7a1c1c' }}>Error al subir el archivo</span>
             </div>
             <div style={sS.cardBody}>
-              {ERRORES_VALIDACION.map((err, i) => (
-                <div key={i} style={sS.errorRow}>
-                  <div style={{ padding: '3px 7px', borderRadius: 3, background: '#fde8e8', color: '#7a1c1c', fontSize: 10.5, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
-                    Fila {err.fila}
-                  </div>
-                  <div style={{ padding: '3px 7px', borderRadius: 3, background: '#fff3cd', color: '#7a4a00', fontSize: 10.5, fontWeight: 600, flexShrink: 0 }}>
-                    {err.tipo}
-                  </div>
-                  <div style={{ padding: '3px 7px', borderRadius: 3, background: '#dbeafe', color: '#0d4272', fontSize: 10.5, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
-                    {err.col}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#4a5550', flex: 1 }}>{err.msg}</div>
-                </div>
-              ))}
+              <div style={{ padding: '10px 12px', background: '#fde8e8', borderRadius: 4, fontSize: 12.5, color: '#7a1c1c', fontFamily: "'JetBrains Mono', monospace" }}>
+                {uploadError}
+              </div>
+              <div style={{ marginTop: 10, fontSize: 11.5, color: '#6b7772' }}>
+                Verificá que el backend esté corriendo en <code>http://localhost:8000</code> y que el contratista ID {CONTRATISTA_IDS[contratista]} exista en la base de datos.
+              </div>
             </div>
           </div>
-
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <button style={sS.btnSecondary} onClick={() => { setFiles([]); setStep('drop'); }}>
-              Descargar Excel con marcas
-            </button>
-            <button style={sS.btnPrimary} onClick={() => { setStep('drop'); setFiles([]); onBack(); }}>
-              <Icon name="send" size={14} /> Enviar al Pipeline
-            </button>
+            <button style={sS.btnSecondary} onClick={resetFlow}>Volver a intentar</button>
           </div>
         </>
       )}

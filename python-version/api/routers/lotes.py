@@ -66,6 +66,29 @@ async def crear_lote(
     return LoteResponse.model_validate(lote)
 
 
+@router.post("/{lote_id}/reprocesar", response_model=LoteResponse, summary="Reprocesar un lote existente")
+def reprocesar_lote(
+    lote_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Resetea el estado del lote a RECIBIDO y vuelve a lanzar el worker de procesamiento.
+
+    Útil para reintentar lotes que terminaron en ERROR sin necesidad de re-subir el archivo.
+    El binario original persiste en `data/uploads/` y se reutiliza tal cual.
+    """
+    from api.db.models.base_models import LoteArchivo
+    lote = db.query(LoteArchivo).filter(LoteArchivo.id == lote_id).first()
+    if not lote:
+        raise HTTPException(status_code=404, detail=f"Lote con id={lote_id} no encontrado.")
+    lote.estado = "RECIBIDO"
+    lote.detalle_error = None
+    db.commit()
+    db.refresh(lote)
+    background_tasks.add_task(procesar_lote_en_background, lote.id)
+    return LoteResponse.model_validate(lote)
+
+
 @router.patch("/{lote_id}/estado", response_model=LoteResponse, summary="Actualizar estado del lote")
 def actualizar_estado_lote(
     lote_id: int,

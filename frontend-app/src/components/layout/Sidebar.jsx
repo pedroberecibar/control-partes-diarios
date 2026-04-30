@@ -68,15 +68,18 @@ export function Sidebar({ activeScreen, onNav, role, collapsed, onToggle }) {
   return (
     <aside style={sS.sidebar}>
       <div style={sS.logoRow}>
-        {!collapsed && <img src="/assets/epec-logo-white.png" style={sS.logoImg} alt="EPEC" />}
+        {!collapsed && (
+          <svg height="26" viewBox="0 0 96 26" fill="none" style={sS.logoImg} aria-label="EPEC">
+            <rect width="26" height="26" rx="5" fill="rgba(109,191,151,0.25)" />
+            <text x="13" y="19" fontFamily="'Plus Jakarta Sans',Arial,sans-serif" fontSize="13" fontWeight="800" fill="white" textAnchor="middle">E</text>
+            <text x="34" y="20" fontFamily="'Plus Jakarta Sans',Arial,sans-serif" fontSize="18" fontWeight="800" fill="white" letterSpacing="-0.5">EPEC</text>
+          </svg>
+        )}
         {collapsed && (
-          <div style={{ width: 26, height: 26, overflow: 'hidden', borderRadius: 2, flexShrink: 0 }}>
-            <img
-              src="/assets/epec-logo-white.png"
-              style={{ height: 26, width: 'auto', display: 'block', maxWidth: 'none' }}
-              alt="EPEC"
-            />
-          </div>
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-label="EPEC">
+            <rect width="28" height="28" rx="5" fill="rgba(109,191,151,0.25)" />
+            <text x="14" y="20" fontFamily="'Plus Jakarta Sans',Arial,sans-serif" fontSize="14" fontWeight="800" fill="white" textAnchor="middle">E</text>
+          </svg>
         )}
         {!collapsed && (
           <button style={sS.collapseBtn} onClick={onToggle} title="Contraer">

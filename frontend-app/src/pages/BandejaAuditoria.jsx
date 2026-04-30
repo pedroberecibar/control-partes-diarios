@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon, PARTE_ESTADO_CONFIG, StatusChip, TRAZA_CONFIG } from '../components/Icon';
 import { VisorModal } from '../components/visor/Visor';
 import { getPartePhotos } from '../data/visorMock';
-import { CONTRATISTAS, ESTADOS, LOTES, PARTES, TRAZAS } from '../data/partesMock';
+import { PARTES } from '../data/partesMock';
+import { getPartes } from '../api/partesApi';
+import { normalizeParte } from '../api/normalizers';
 
 const PER_PAGE = 25;
 const TRAZAS_DANGER = ['Sin Orden Asociada', 'Repetido X Sumi', 'Error Sumi Nro Med'];
@@ -22,16 +24,51 @@ const COLS = [
 ];
 
 export function BandejaAuditoria({ onOpenDetalle }) {
+  const [partes, setPartes]           = useState(PARTES);
+  const [usingMock, setUsingMock]     = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [filters, setFilters] = useState({ traza: [], estado: [], contratista: [], lote: '', search: '' });
+  const [filters, setFilters]         = useState({ traza: [], estado: [], contratista: [], lote: '', search: '' });
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sortCol, setSortCol] = useState('id');
-  const [sortDir, setSortDir] = useState('asc');
-  const [page, setPage] = useState(1);
-  const [visorParte, setVisorParte] = useState(null);
+  const [sortCol, setSortCol]         = useState('id');
+  const [sortDir, setSortDir]         = useState('asc');
+  const [page, setPage]               = useState(1);
+  const [visorParte, setVisorParte]   = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPartes({ limit: 500 })
+      .then((res) => {
+        if (!cancelled) {
+          setPartes(res.items.map(normalizeParte));
+          setUsingMock(false);
+          setFilters({ traza: [], estado: [], contratista: [], lote: '', search: '' });
+          setPage(1);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setUsingMock(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Derive filter options from loaded data
+  const availableTrazas = useMemo(() => {
+    const s = new Set(partes.map((p) => p.traza).filter((t) => t && t !== '—'));
+    return [...s].sort();
+  }, [partes]);
+
+  const availableEstados = useMemo(() => {
+    const s = new Set(partes.map((p) => p.estado).filter((e) => e && e !== '—'));
+    return [...s].sort();
+  }, [partes]);
+
+  const availableContratistas = useMemo(() => {
+    const s = new Set(partes.map((p) => p.contratista).filter((c) => c && c !== '—'));
+    return [...s].sort();
+  }, [partes]);
 
   const filtered = useMemo(() => {
-    let rows = PARTES;
+    let rows = partes;
     if (filters.traza.length)       rows = rows.filter((r) => filters.traza.includes(r.traza));
     if (filters.estado.length)      rows = rows.filter((r) => filters.estado.includes(r.estado));
     if (filters.contratista.length) rows = rows.filter((r) => filters.contratista.includes(r.contratista));
@@ -43,11 +80,11 @@ export function BandejaAuditoria({ onOpenDetalle }) {
           r.id.toLowerCase().includes(q) ||
           r.operario.toLowerCase().includes(q) ||
           r.suministro.includes(filters.search) ||
-          r.ord_nro.toLowerCase().includes(q)
+          String(r.ord_nro).toLowerCase().includes(q)
       );
     }
     return rows;
-  }, [filters]);
+  }, [filters, partes]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -62,9 +99,9 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
   const trazaCounts = useMemo(() => {
     const c = {};
-    PARTES.forEach((r) => { c[r.traza] = (c[r.traza] || 0) + 1; });
+    partes.forEach((r) => { c[r.traza] = (c[r.traza] || 0) + 1; });
     return c;
-  }, []);
+  }, [partes]);
 
   function toggleFilter(key, val) {
     setFilters((f) => {
@@ -139,10 +176,10 @@ export function BandejaAuditoria({ onOpenDetalle }) {
     mono: { fontFamily: "'JetBrains Mono', monospace", fontSize: 11 },
     trHover: { cursor: 'pointer', transition: 'background 0.08s' },
     checkbox: { width: 14, height: 14, cursor: 'pointer', accentColor: '#124e2f' },
-    actionBtn: { border: 'none', background: 'transparent', cursor: 'pointer', color: '#8f9c97', display: 'inline-flex', alignItems: 'center', padding: '2px 4px', borderRadius: 3, transition: 'background 0.1s, color 0.1s' },
     pagination: { padding: '10px 16px', background: 'white', borderTop: '1px solid #eaeeec', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 },
     pageBtn: { width: 28, height: 28, border: '1px solid #d5ddd9', borderRadius: 4, background: 'white', fontSize: 12, cursor: 'pointer', color: '#4a5550', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     pageBtnActive: { background: '#124e2f', color: 'white', border: '1px solid #124e2f' },
+    mockBanner: { padding: '5px 14px', background: '#fff3cd', borderBottom: '1px solid #f5d56a', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#7a4a00', fontWeight: 600, flexShrink: 0 },
   };
 
   const activeFilterCount =
@@ -165,7 +202,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Traza Calidad</div>
-          {TRAZAS.map((t) => {
+          {availableTrazas.map((t) => {
             const active = filters.traza.includes(t);
             return (
               <div
@@ -183,7 +220,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Estado</div>
-          {ESTADOS.map((e) => {
+          {availableEstados.map((e) => {
             const active = filters.estado.includes(e);
             return (
               <div
@@ -200,7 +237,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Contratista</div>
-          {CONTRATISTAS.map((c) => {
+          {availableContratistas.map((c) => {
             const active = filters.contratista.includes(c);
             return (
               <div
@@ -214,21 +251,16 @@ export function BandejaAuditoria({ onOpenDetalle }) {
             );
           })}
         </div>
-
-        <div style={bS.filterSection}>
-          <div style={bS.filterSectionLabel}>Lote</div>
-          <select
-            value={filters.lote}
-            onChange={(e) => { setFilters((f) => ({ ...f, lote: e.target.value })); setPage(1); }}
-            style={{ width: '100%', padding: '5px 8px', fontSize: 11.5, border: '1px solid #eaeeec', borderRadius: 4, color: '#2f3733', background: 'white' }}
-          >
-            <option value="">Todos los lotes</option>
-            {LOTES.map((l) => (<option key={l} value={l}>{l}</option>))}
-          </select>
-        </div>
       </div>
 
       <div style={bS.main}>
+        {usingMock && (
+          <div style={bS.mockBanner}>
+            <Icon name="alert-circle" size={12} color="#e6910a" />
+            Backend no disponible — mostrando datos de demostración
+          </div>
+        )}
+
         <div style={bS.toolbar}>
           <button style={{ ...bS.btn, padding: '5px 8px' }} onClick={() => setSidebarOpen((v) => !v)} title="Filtros">
             <Icon name="filter" size={13} />
@@ -290,7 +322,10 @@ export function BandejaAuditoria({ onOpenDetalle }) {
                 const ec = PARTE_ESTADO_CONFIG[row.estado] || {};
                 const isDanger = TRAZAS_DANGER.includes(row.traza);
                 const baseBg = selected ? '#edf5f0' : isDanger ? '#fff9f9' : i % 2 === 0 ? 'white' : '#fafcfb';
-                const photoCount = getPartePhotos(row.id).length;
+                // Use cant_imagenes from API data; fall back to mock photo count for demo data
+                const photoCount = row.cant_imagenes != null && !usingMock
+                  ? row.cant_imagenes
+                  : getPartePhotos(row.id).length;
                 return (
                   <tr
                     key={row.id}

@@ -11,6 +11,8 @@ Cambios vs Fabric:
   - Bitácora de procesados en `stage/_historial_procesados.parquet`.
   - `pd.concat` dentro del bucle (O(n²)) → acumulo en lista y un solo concat.
   - NO se llama a `spark.createDataFrame` ni se escribe Delta.
+  - `header=2` fijo → detección automática (prueba rows 0-4, elige el de más matches).
+  - Nombres exactos → aliases múltiples igual que el adapter COOPLYF.
 """
 
 from __future__ import annotations
@@ -30,20 +32,51 @@ log = logging.getLogger(__name__)
 CONTRATISTA = "CONECTAR"
 TABLA_STAGING = "pd_conectar_aux"
 
-# Mapeo exacto de columnas del Excel → schema canónico del staging.
-# Portado sin cambios del MAPEO_COLUMNAS del script original.
-MAPEO_COLUMNAS: dict[str, str] = {
-    "ID":         "ID_Externo",
-    "Fecha":      "Fecha",
-    "Suministro": "Suministro",
-    "Colocado":   "medidorColocado",
-    "Retirado":   "medidorRetirado",
-    "Codigo":     "codTiposManoObra",
+# Aliases: cualquier variante del archivo real → nombre canónico.
+# La clave del dict original (nombre en PySpark) se mantiene como primer alias.
+MAPA_RENOMBRES: dict[str, str] = {
+    # ID / Nro parte
+    "ID": "ID_Externo", "Id": "ID_Externo", "id": "ID_Externo",
+    "Nro": "ID_Externo", "N°": "ID_Externo", "Numero": "ID_Externo",
+    "Nro Parte": "ID_Externo", "N° Parte": "ID_Externo",
+    # Fecha
+    "Fecha": "Fecha", "fecha": "Fecha", "FECHA": "Fecha",
+    "Fecha Trabajo": "Fecha", "FechaTrabajo": "Fecha",
+    # Suministro
+    "Suministro": "Suministro", "Suministros": "Suministro",
+    "NIS": "Suministro", "Cuenta": "Suministro",
+    "N° Suministro": "Suministro", "Nro. Suministro": "Suministro",
+    "idSuministros": "Suministro",
+    # Medidor colocado
+    "Colocado": "medidorColocado", "Medidor Colocado": "medidorColocado",
+    "MedidorColocado": "medidorColocado", "medidorColocado": "medidorColocado",
+    "Nro Medidor Colocado": "medidorColocado", "nroMedidorColocado": "medidorColocado",
+    # Medidor retirado
+    "Retirado": "medidorRetirado", "Medidor Retirado": "medidorRetirado",
+    "MedidorRetirado": "medidorRetirado", "medidorRetirado": "medidorRetirado",
+    "Nro Medidor Retirado": "medidorRetirado", "nroMedidorRetirado": "medidorRetirado",
+    # Código de tarea
+    "Codigo": "codTiposManoObra", "Código": "codTiposManoObra",
+    "código": "codTiposManoObra", "codigo": "codTiposManoObra",
+    "Tarea": "codTiposManoObra", "Cod Tarea": "codTiposManoObra",
+    "Cod. Tarea": "codTiposManoObra", "codTiposManoObra": "codTiposManoObra",
+    "Tipo": "codTiposManoObra",
 }
+
+# Columnas canónicas que deben existir en el output (se crean como None si faltan)
+COLS_FINAL = [
+    "ID_Externo", "Fecha", "Suministro",
+    "medidorColocado", "medidorRetirado", "codTiposManoObra",
+    "ORIGEN_ARCHIVO",
+]
 
 COLS_TEXTO = [
     "ID_Externo", "Suministro", "medidorColocado", "medidorRetirado", "codTiposManoObra",
 ]
+
+# Filas de encabezado a intentar si el header=2 original no matchea
+_HEADER_ROWS_CANDIDATOS = [2, 0, 1, 3, 4]
+
 
 
 def obtener_codigos_habilitados() -> list[str]:
@@ -60,40 +93,89 @@ def obtener_codigos_habilitados() -> list[str]:
     return [str(x) for x in df.dropna().unique()]
 
 
+def _detectar_header(path: Path) -> pd.DataFrame | None:
+    """Intenta varios header rows y devuelve el DataFrame con más columnas conocidas."""
+    mejor_df: pd.DataFrame | None = None
+    mejor_score = -1
+    for h in _HEADER_ROWS_CANDIDATOS:
+        try:
+            df = pd.read_excel(path, header=h, dtype=str)
+        except Exception:
+            continue
+        df.columns = df.columns.str.strip()
+        score = sum(1 for c in df.columns if c in MAPA_RENOMBRES)
+        if score > mejor_score:
+            mejor_score = score
+            mejor_df = df
+    if mejor_df is not None:
+        log.info("CONECTAR adapter — header detectado con score=%d cols=%s", mejor_score, list(mejor_df.columns)[:12])
+    return mejor_df
+
+
 def procesar_excel(path: Path, codigos_validos: list[str]) -> tuple[pd.DataFrame | None, dict]:
-    """Lee un Excel, aplica mapeo de columnas, filtra por códigos habilitados.
+    """Lee un Excel con detección flexible de header y aliases de columnas.
 
     Devuelve (df_filtrado_o_None, stats).
     """
     stats = {"total_leido": 0, "aprobados_ce": 0}
-    try:
-        df = pd.read_excel(path, header=2)
-    except Exception as e:
-        log.error("Error leyendo %s: %s", path.name, e)
+
+    df = _detectar_header(path)
+    if df is None:
+        log.error("No se pudo leer %s con ningún header candidato.", path.name)
         return None, stats
 
-    # Seleccionar columnas presentes y renombrarlas
-    cols_existentes = [c for c in MAPEO_COLUMNAS if c in df.columns]
-    df = df[cols_existentes].rename(columns=MAPEO_COLUMNAS)
+    # Renombrar usando aliases
+    df = df.rename(columns=MAPA_RENOMBRES)
+    df = df.loc[:, ~df.columns.duplicated()]
 
-    # Normalización de texto — replica el tratamiento original
+    # Asegurar que todas las columnas canónicas existan
+    for c in COLS_FINAL:
+        if c not in df.columns:
+            df[c] = None
+
+    # Descartar filas de totales/encabezados residuales por fecha no parseable
+    if "Fecha" in df.columns:
+        df = df.loc[~df["Fecha"].astype(str).str.contains("Total|Fecha", case=False, na=False)]
+        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+        df = df.loc[df["Fecha"].notna()]
+
+    # Normalización de texto
     for c in COLS_TEXTO:
         if c in df.columns:
-            df[c] = df[c].astype(str).replace({"nan": None, "<NA>": None, "None": None})
-
-    if "Fecha" in df.columns:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+            df[c] = (
+                df[c].astype(str)
+                .str.replace(r"\.0$", "", regex=True)
+                .replace({"nan": None, "<NA>": None, "None": None, "": None})
+            )
 
     stats["total_leido"] = len(df)
 
-    # Filtro por códigos habilitados (igual que el script original)
+    # Normalización vectorizada de códigos CONECTAR:
+    #   "COD 07G." → "07",  "COD 02P44CM5" → "02",  "7" → "07",  "07" → "07"
+    if "codTiposManoObra" in df.columns:
+        raw = df["codTiposManoObra"].astype(str).str.strip()
+        # Extrae los primeros 1-2 dígitos que aparezcan en el valor (ignora prefijo "COD " y sufijos)
+        extracted = raw.str.extract(r"(\d{1,2})", expand=False)
+        # Donde se extrajo un número → zero-fill; donde no → mantener original
+        df["codTiposManoObra"] = extracted.where(extracted.isna(), extracted.str.zfill(2)).where(
+            extracted.notna(), raw
+        )
+
+    # Filtro por códigos habilitados
     if "codTiposManoObra" in df.columns and codigos_validos:
+        codigos_en_archivo = df["codTiposManoObra"].dropna().unique().tolist()
+        log.info("CONECTAR adapter — codigos normalizados en archivo: %s | codigos validos: %s",
+                 codigos_en_archivo[:20], codigos_validos)
         df_ce = df.loc[df["codTiposManoObra"].isin(codigos_validos)].copy()
         stats["aprobados_ce"] = len(df_ce)
     else:
+        log.warning("CONECTAR adapter — sin codTiposManoObra o codigos_validos vacío (total=%d).",
+                    stats["total_leido"])
         df_ce = pd.DataFrame()
 
     if df_ce.empty:
+        log.warning("CONECTAR adapter — df_ce vacío tras filtro (total_leido=%d, codigos=%s).",
+                    stats["total_leido"], codigos_validos)
         return None, stats
 
     df_ce["ORIGEN_ARCHIVO"] = path.name

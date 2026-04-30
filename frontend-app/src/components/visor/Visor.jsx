@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon, PARTE_ESTADO_CONFIG, StatusChip, TRAZA_CONFIG } from '../Icon';
 import { OBSERVACIONES_LABELS, getMockObs, getPartePhotos } from '../../data/visorMock';
+import { getVisor } from '../../api/partesApi';
+
+function mapApiObs(apiObs) {
+  if (!apiObs) return null;
+  return {
+    gabinete:    apiObs.gabinete    ?? false,
+    subterraneo: apiObs.subterraneo ?? false,
+    altura:      apiObs.altura      ?? false,
+    aereo:       apiObs.aereo       ?? false,
+    eq_reempl:   apiObs.equipo_medicion_reemplazado ?? false,
+    acom_real:   apiObs.acometida_realizada          ?? false,
+    tapa_reempl: apiObs.tapa_reemplazada             ?? false,
+    med_reg:     apiObs.equipo_medicion_instalado    ?? false,
+  };
+}
 
 // ── Tira de thumbnails portrait ─────────────────────────────────
 function ThumbnailStrip({ photos, activeIdx, onSelect, size = 64 }) {
@@ -268,9 +283,9 @@ export function ImageViewer({ photos, embedded = false, parteId, initialIdx = 0,
 }
 
 // ── Panel lateral del modal — datos del parte ────────────────────
-function ModalDetailPanel({ parte, onGoToDetalle }) {
+function ModalDetailPanel({ parte, onGoToDetalle, obsOverride }) {
   const p = parte || {};
-  const obs = getMockObs(p.id || '0');
+  const obs = obsOverride || getMockObs(p.id || '0');
   const allNo = Object.values(obs).every((v) => !v);
   const tc = TRAZA_CONFIG[p.traza] || {};
 
@@ -406,13 +421,38 @@ function ModalDetailPanel({ parte, onGoToDetalle }) {
 
 // ── Modal completo (B5 — icono cámara en bandeja) ─────────────────
 export function VisorModal({ parte, onClose, onGoToDetalle }) {
-  const photos = getPartePhotos(parte?.id);
+  const [photos, setPhotos] = useState(() => getPartePhotos(parte?.id));
+  const [obsOverride, setObsOverride] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 300);
-    return () => clearTimeout(t);
-  }, [parte?.id]);
+    let cancelled = false;
+    setLoading(true);
+    if (parte?._id) {
+      getVisor(parte._id)
+        .then((data) => {
+          if (cancelled) return;
+          setPhotos((data.imagenes || []).map((img) => img.url));
+          setObsOverride(mapApiObs(data.observaciones_app));
+          setLoading(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setPhotos(getPartePhotos(parte?.id));
+          setObsOverride(null);
+          setLoading(false);
+        });
+    } else {
+      const t = setTimeout(() => {
+        if (!cancelled) {
+          setPhotos(getPartePhotos(parte?.id));
+          setLoading(false);
+        }
+      }, 300);
+      return () => { cancelled = true; clearTimeout(t); };
+    }
+    return () => { cancelled = true; };
+  }, [parte?._id, parte?.id]);
 
   return (
     <div
@@ -461,7 +501,7 @@ export function VisorModal({ parte, onClose, onGoToDetalle }) {
           ) : (
             <ImageViewer photos={photos} parteId={parte?.id} onClose={onClose} />
           )}
-          <ModalDetailPanel parte={parte} onGoToDetalle={onGoToDetalle} />
+          <ModalDetailPanel parte={parte} onGoToDetalle={onGoToDetalle} obsOverride={obsOverride} />
         </div>
 
         <div style={{ padding: '5px 14px', background: '#111614', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', gap: 16, flexShrink: 0 }}>
@@ -481,7 +521,24 @@ export function VisorModal({ parte, onClose, onGoToDetalle }) {
 
 // ── Visor embebido para B6 (Detalle) ──────────────────────────────
 export function EmbeddedVisor({ parte }) {
-  const photos = getPartePhotos(parte?.id);
+  const [photos, setPhotos] = useState(() => getPartePhotos(parte?.id));
+
+  useEffect(() => {
+    let cancelled = false;
+    if (parte?._id) {
+      getVisor(parte._id)
+        .then((data) => {
+          if (!cancelled) setPhotos((data.imagenes || []).map((img) => img.url));
+        })
+        .catch(() => {
+          if (!cancelled) setPhotos(getPartePhotos(parte?.id));
+        });
+    } else {
+      setPhotos(getPartePhotos(parte?.id));
+    }
+    return () => { cancelled = true; };
+  }, [parte?._id, parte?.id]);
+
   return (
     <div style={{ background: '#1a1f1d', borderRadius: 6, overflow: 'hidden', height: 440, display: 'flex' }}>
       <ImageViewer photos={photos} parteId={parte?.id} embedded onClose={() => {}} />

@@ -1,12 +1,66 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon, LOTE_ESTADO_CONFIG, StatusChip } from '../components/Icon';
+import { getLotes, reprocesarLote } from '../api/lotesApi';
+import { normalizeLote } from '../api/normalizers';
 import { LOTES_DATA } from '../data/lotesMock';
 
-export function ListaLotes({ onSubir }) {
-  const [search, setSearch] = useState('');
-  const [estadoFilter, setEstadoFilter] = useState('');
+const ESTADOS_OK         = ['OK', 'PROCESADO_OK'];
+const ESTADOS_PROCESANDO = ['RECIBIDO', 'VALIDANDO', 'PROCESANDO', 'EN_CORE', 'EN_OBS'];
+const ESTADOS_ERROR      = ['RECHAZADO_SINTAXIS', 'ERROR'];
 
-  const filtered = LOTES_DATA.filter((l) => {
+export function ListaLotes({ onSubir }) {
+  const [lotes, setLotes]               = useState(LOTES_DATA);
+  const [usingMock, setUsingMock]       = useState(false);
+  const [search, setSearch]             = useState('');
+  const [estadoFilter, setEstadoFilter] = useState('');
+  const [reprocesando, setReprocesando] = useState(new Set());
+  const pollRef = useRef(null);
+
+  const fetchLotes = (cancelled = { val: false }) => {
+    getLotes(0, 200)
+      .then((res) => {
+        if (!cancelled.val) {
+          const normalized = res.items.map(normalizeLote);
+          setLotes(normalized);
+          setUsingMock(false);
+          // Mientras haya lotes en proceso, seguir polling cada 2 s.
+          const enProceso = normalized.some((l) => ESTADOS_PROCESANDO.includes(l.estado));
+          if (enProceso) {
+            pollRef.current = setTimeout(() => fetchLotes(cancelled), 2000);
+          } else {
+            setReprocesando(new Set());
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled.val) setUsingMock(true);
+      });
+  };
+
+  useEffect(() => {
+    const cancelled = { val: false };
+    fetchLotes(cancelled);
+    return () => {
+      cancelled.val = true;
+      clearTimeout(pollRef.current);
+    };
+  }, []);
+
+  const handleReprocesar = (lote) => {
+    if (reprocesando.has(lote._id)) return;
+    setReprocesando((prev) => new Set([...prev, lote._id]));
+    reprocesarLote(lote._id)
+      .then(() => {
+        const cancelled = { val: false };
+        fetchLotes(cancelled);
+      })
+      .catch((err) => {
+        setReprocesando((prev) => { const s = new Set(prev); s.delete(lote._id); return s; });
+        alert(`Error al reprocesar: ${err.message}`);
+      });
+  };
+
+  const filtered = lotes.filter((l) => {
     const q = search.toLowerCase();
     const matchSearch =
       !q ||
@@ -41,13 +95,14 @@ export function ListaLotes({ onSubir }) {
     mono: { fontFamily: "'JetBrains Mono', monospace", fontSize: 11 },
     trHover: { cursor: 'pointer', transition: 'background 0.08s' },
     actionBtn: { border: 'none', background: 'transparent', cursor: 'pointer', color: '#8f9c97', display: 'inline-flex', alignItems: 'center', padding: '2px 4px', borderRadius: 3, transition: 'all 0.1s' },
+    mockBanner: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: '#fff3cd', border: '1px solid #f5d56a', borderRadius: 4, fontSize: 11, color: '#7a4a00', fontWeight: 600, marginBottom: 12 },
   };
 
   const kpis = [
-    { label: 'Total Lotes (mes)', value: LOTES_DATA.length, sub: 'todos los estados' },
-    { label: 'Lotes OK',          value: LOTES_DATA.filter((l) => l.estado === 'OK').length, sub: 'procesados correctamente', color: '#155a2e' },
-    { label: 'En Proceso',        value: LOTES_DATA.filter((l) => ['VALIDANDO', 'EN_CORE', 'EN_OBS', 'RECIBIDO'].includes(l.estado)).length, sub: 'pendientes de completar', color: '#7a4a00' },
-    { label: 'Con Errores',       value: LOTES_DATA.filter((l) => ['RECHAZADO_SINTAXIS', 'ERROR'].includes(l.estado)).length, sub: 'requieren atención', color: '#7a1c1c' },
+    { label: 'Total Lotes (mes)', value: lotes.length, sub: 'todos los estados' },
+    { label: 'Lotes OK',          value: lotes.filter((l) => ESTADOS_OK.includes(l.estado)).length,         sub: 'procesados correctamente', color: '#155a2e' },
+    { label: 'En Proceso',        value: lotes.filter((l) => ESTADOS_PROCESANDO.includes(l.estado)).length, sub: 'pendientes de completar',   color: '#7a4a00' },
+    { label: 'Con Errores',       value: lotes.filter((l) => ESTADOS_ERROR.includes(l.estado)).length,      sub: 'requieren atención',        color: '#7a1c1c' },
   ];
 
   return (
@@ -61,6 +116,13 @@ export function ListaLotes({ onSubir }) {
           <Icon name="upload" size={14} /> Subir Archivos
         </button>
       </div>
+
+      {usingMock && (
+        <div style={lS.mockBanner}>
+          <Icon name="alert-circle" size={13} color="#e6910a" />
+          Backend no disponible — mostrando datos de demostración
+        </div>
+      )}
 
       <div style={lS.kpiRow}>
         {kpis.map((k) => (
@@ -131,8 +193,8 @@ export function ListaLotes({ onSubir }) {
                   <td style={lS.td}>{lote.subido_por}</td>
                   <td style={{ ...lS.td, ...lS.mono, color: '#4a5550' }}>{lote.fecha}</td>
                   <td style={lS.td}><StatusChip label={lote.estado} config={ec} /></td>
-                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right' }}>{lote.filas.toLocaleString()}</td>
-                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: '#155a2e', fontWeight: 600 }}>{lote.ok.toLocaleString()}</td>
+                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right' }}>{lote.filas > 0 ? lote.filas.toLocaleString() : '—'}</td>
+                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: '#155a2e', fontWeight: 600 }}>{lote.ok > 0 ? lote.ok.toLocaleString() : '—'}</td>
                   <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: lote.advertencias > 0 ? '#7a4a00' : '#8f9c97' }}>
                     {lote.advertencias > 0 ? lote.advertencias : '—'}
                   </td>
@@ -140,17 +202,36 @@ export function ListaLotes({ onSubir }) {
                     {lote.errores > 0 ? lote.errores : '—'}
                   </td>
                   <td style={lS.td}>
-                    {['eye', 'refresh-cw', 'download'].map((icon) => (
-                      <button
-                        key={icon}
-                        style={lS.actionBtn}
-                        title={icon}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = '#edf5f0'; e.currentTarget.style.color = '#124e2f'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#8f9c97'; }}
-                      >
-                        <Icon name={icon} size={13} />
-                      </button>
-                    ))}
+                    <button
+                      style={lS.actionBtn}
+                      title="Ver detalle"
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#edf5f0'; e.currentTarget.style.color = '#124e2f'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#8f9c97'; }}
+                    >
+                      <Icon name="eye" size={13} />
+                    </button>
+                    <button
+                      style={{
+                        ...lS.actionBtn,
+                        color: reprocesando.has(lote._id) ? '#124e2f' : '#8f9c97',
+                        opacity: reprocesando.has(lote._id) ? 0.6 : 1,
+                      }}
+                      title="Reprocesar lote"
+                      disabled={reprocesando.has(lote._id)}
+                      onClick={() => handleReprocesar(lote)}
+                      onMouseEnter={(e) => { if (!reprocesando.has(lote._id)) { e.currentTarget.style.background = '#edf5f0'; e.currentTarget.style.color = '#124e2f'; } }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = reprocesando.has(lote._id) ? '#124e2f' : '#8f9c97'; }}
+                    >
+                      <Icon name="refresh-cw" size={13} />
+                    </button>
+                    <button
+                      style={lS.actionBtn}
+                      title="Descargar archivo"
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#edf5f0'; e.currentTarget.style.color = '#124e2f'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#8f9c97'; }}
+                    >
+                      <Icon name="download" size={13} />
+                    </button>
                   </td>
                 </tr>
               );

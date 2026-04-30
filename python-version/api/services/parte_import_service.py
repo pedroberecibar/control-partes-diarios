@@ -14,6 +14,7 @@ vía `ID_Externo` cuando está disponible, o se cae al row del propio `df_final`
 """
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import Any
 
@@ -65,6 +66,24 @@ class ParteImportService:
         """
         if df_final.empty:
             log.warning("df_final vacío — no hay nada para importar (lote_id=%d).", lote_id)
+            return {"raws": 0, "procesados": 0, "imagenes": 0}
+
+        # Idempotencia: limpiar datos de un intento previo del mismo lote.
+        self._limpiar_lote_previo(lote_id)
+
+        # Dedup intra-batch: conservar primera ocurrencia de cada hash.
+        if "ID_PARTE_HASH" in df_final.columns:
+            n_antes = len(df_final)
+            df_final = df_final.drop_duplicates(subset=["ID_PARTE_HASH"], keep="first")
+            n_dup = n_antes - len(df_final)
+            if n_dup:
+                log.warning("importar_lote — %d filas con ID_PARTE_HASH duplicado descartadas.", n_dup)
+
+        # Excluir hashes ya existentes en otros lotes (colisión cross-lote).
+        df_final = self._excluir_hashes_existentes(df_final, lote_id)
+
+        if df_final.empty:
+            log.warning("importar_lote — df_final vacío tras dedup/exclusión (lote_id=%d).", lote_id)
             return {"raws": 0, "procesados": 0, "imagenes": 0}
 
         raws_by_hash = self._crear_raws(lote_id, df_aux, df_final)
@@ -313,6 +332,41 @@ class ParteImportService:
             return value.to_pydatetime()
         return value
 
+    def _limpiar_lote_previo(self, lote_id: int) -> None:
+        """Elimina procesados, raws e imágenes de un intento previo del mismo lote."""
+        n = (
+            self.db.query(ParteDiarioProcesado)
+            .filter(ParteDiarioProcesado.lote_id == lote_id)
+            .delete(synchronize_session=False)
+        )
+        self.db.query(ParteDiarioRaw).filter(
+            ParteDiarioRaw.lote_id == lote_id
+        ).delete(synchronize_session=False)
+        if n:
+            log.info("_limpiar_lote_previo — %d procesados eliminados para lote %d.", n, lote_id)
+
+    def _excluir_hashes_existentes(self, df_final: pd.DataFrame, lote_id: int) -> pd.DataFrame:
+        """Descarta filas cuyo hash ya existe en procesados de otro lote."""
+        if "ID_PARTE_HASH" not in df_final.columns:
+            return df_final
+        all_hashes = df_final["ID_PARTE_HASH"].dropna().unique().tolist()
+        if not all_hashes:
+            return df_final
+        existing = {
+            row[0]
+            for row in self.db.query(ParteDiarioProcesado.id_parte_hash)
+            .filter(ParteDiarioProcesado.id_parte_hash.in_(all_hashes))
+            .all()
+        }
+        if existing:
+            n = int(df_final["ID_PARTE_HASH"].isin(existing).sum())
+            log.warning(
+                "_excluir_hashes_existentes — %d partes con hash ya en otro lote descartados (lote_id=%d).",
+                n, lote_id,
+            )
+            df_final = df_final[~df_final["ID_PARTE_HASH"].isin(existing)].copy()
+        return df_final
+
 
 def _row_to_jsonable_dict(row: pd.Series | dict) -> dict[str, Any]:
     """Convierte una Serie/dict de pandas a un dict JSON-serializable.
@@ -329,6 +383,8 @@ def _row_to_jsonable_dict(row: pd.Series | dict) -> dict[str, Any]:
         if v is None:
             out[k] = None
         elif isinstance(v, pd.Timestamp):
+            out[k] = v.isoformat()
+        elif isinstance(v, (datetime.date, datetime.datetime)):
             out[k] = v.isoformat()
         elif isinstance(v, float) and pd.isna(v):
             out[k] = None

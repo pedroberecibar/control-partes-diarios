@@ -1,26 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon, PARTE_ESTADO_CONFIG, StatusChip, TRAZA_CONFIG } from '../components/Icon';
 import { EmbeddedVisor } from '../components/visor/Visor';
 import { getPartePhotos } from '../data/visorMock';
+import { editarParte } from '../api/partesApi';
+import { getAuditoria } from '../api/auditoriaApi';
+
+const USUARIO_ID_DEFAULT = 1; // placeholder hasta wiring de auth
 
 const CRUCE_RESULTS = {
   A: { match: true,  detail: 'ORD_NRO CE-482301 encontrada en dim_ord. TOR=CE, estado=VÁLIDO, SRV_CODIGO coincide.' },
   B: { match: true,  detail: 'Medidor declarado M74829103 presente en SIGEC para SRV_CODIGO=412881. USES=1.00.' },
   C: { match: false, detail: 'COD_EPEC declarado 1003 difiere del SIGEC (1004). Flag: USES_DIFF = +0.25.' },
 };
-
-const BITACORA_EVENTS = [
-  { ts:'01/04/2025 09:14', actor:'Sistema',   action:'Parte ingresado en lote CONECTAR_2025-04-01', type:'system'  },
-  { ts:'01/04/2025 09:14', actor:'Sistema',   action:'Validación sintáctica OK — 0 errores de formato', type:'system'  },
-  { ts:'01/04/2025 09:17', actor:'Sistema',   action:'Cruce A: ORD_NRO CE-482301 match encontrado', type:'system'  },
-  { ts:'01/04/2025 09:17', actor:'Sistema',   action:'Cruce B: Medidor M74829103 match en SIGEC',   type:'system'  },
-  { ts:'01/04/2025 09:17', actor:'Sistema',   action:'Cruce C: divergencia COD_EPEC 1003 ≠ SIGEC 1004 → TRAZA=Error Sumi Nro Med', type:'warning' },
-  { ts:'01/04/2025 10:42', actor:'López, M.', action:'Abrió detalle del parte para revisión',       type:'user'    },
-  { ts:'01/04/2025 10:55', actor:'López, M.', action:'Modificó COD_EPEC: 1003 → 1004 · Motivo: "SIGEC actualizado hoy"', type:'edit' },
-  { ts:'01/04/2025 10:55', actor:'Sistema',   action:'Recalculó USES: 1.00 → 1.25 · Recomputó Control Obs', type:'system' },
-  { ts:'01/04/2025 11:01', actor:'López, M.', action:'TRAZA actualizada: Error Sumi Nro Med → Corregido Medidor', type:'edit' },
-  { ts:'01/04/2025 11:03', actor:'López, M.', action:'Parte Aprobado · versión 2', type:'success' },
-];
 
 const BITACORA_COLORS = {
   system:  { icon: 'circle',        color: '#b5bfbb', bg: '#f5f7f6' },
@@ -30,10 +21,30 @@ const BITACORA_COLORS = {
   success: { icon: 'check-circle',  color: '#1d8348', bg: '#d4edda' },
 };
 
+const BITACORA_MOCK = [
+  { ts:'01/04/2025 09:14', actor:'Sistema',   action:'Parte ingresado en lote',                 type:'system'  },
+  { ts:'01/04/2025 09:14', actor:'Sistema',   action:'Validación sintáctica OK — 0 errores',    type:'system'  },
+  { ts:'01/04/2025 09:17', actor:'Sistema',   action:'Cruce A: ORD_NRO match encontrado',       type:'system'  },
+  { ts:'01/04/2025 09:17', actor:'Sistema',   action:'Cruce C: divergencia COD_EPEC detectada', type:'warning' },
+];
+
 const TABS = [
   { id: 'detalle',  label: 'Detalle' },
   { id: 'bitacora', label: 'Bitácora' },
 ];
+
+function fmtDateTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    const date = [
+      String(d.getDate()).padStart(2, '0'),
+      String(d.getMonth() + 1).padStart(2, '0'),
+      d.getFullYear(),
+    ].join('/');
+    return `${date} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  } catch { return '—'; }
+}
 
 export function DetallePartes({ parte, onBack }) {
   const p = parte || {
@@ -43,35 +54,150 @@ export function DetallePartes({ parte, onBack }) {
     uses: '1.00', lote: 'CONECTAR_2025-04-01', version: 2,
   };
 
-  const [tab, setTab] = useState('detalle');
-  const [showOracleModal, setShowOracleModal] = useState(false);
+  const [tab, setTab]                   = useState('detalle');
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showConflictModal, setShowConflictModal] = useState(false);
-  const [editFields, setEditFields] = useState({
-    cod_epec: p.cod_epec || '1003',
-    ord_nro: p.ord_nro || 'CE-482301',
-    medidor: p.medidor_dec || 'M74829103',
-    traza: p.traza || 'Error Sumi Nro Med',
+  const [editFields, setEditFields]     = useState({
+    cod_epec:    p.cod_epec    || '',
+    ord_nro:     p.ord_nro     || '',
+    medidor:     p.medidor_dec || '',
     observacion: '',
   });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [saved, setSaved]       = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [oracleLoading, setOracleLoading] = useState(false);
-  const [oracleResult, setOracleResult] = useState(null);
-  const [rejectMotivo, setRejectMotivo] = useState('');
+  const [oracleResult, setOracleResult]   = useState(null);
+  const [rejectMotivo, setRejectMotivo]   = useState('');
+  const [approving, setApproving]         = useState(false);
+  const [rejecting, setRejecting]         = useState(false);
+
+  // Bitácora state
+  const [bitacora, setBitacora]       = useState(null); // null = not loaded yet
+  const [bitacoraLoading, setBitacoraLoading] = useState(false);
+  const [bitacoraError, setBitacoraError]     = useState(null);
+
+  // Load bitácora when switching to that tab (only if real parte)
+  useEffect(() => {
+    if (tab !== 'bitacora') return;
+    if (!p._id) { setBitacora(BITACORA_MOCK); return; }
+    setBitacoraLoading(true);
+    setBitacoraError(null);
+    getAuditoria({ parte_id: p._id, limit: 100 })
+      .then((res) => {
+        if (res.items.length === 0) {
+          setBitacora([]);
+        } else {
+          setBitacora(res.items.map((item) => ({
+            ts: fmtDateTime(item.fecha_cambio),
+            actor: `Usuario #${item.usuario_id}`,
+            action: `${item.campo_modificado}: ${item.valor_anterior ?? '(vacío)'} → ${item.valor_nuevo ?? '(vacío)'} · "${item.motivo}"`,
+            type: 'edit',
+            version: item.version_resultante,
+          })));
+        }
+      })
+      .catch((err) => {
+        setBitacoraError(err.message);
+        setBitacora(BITACORA_MOCK);
+      })
+      .finally(() => setBitacoraLoading(false));
+  }, [tab, p._id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function callEditarParte(payload) {
+    if (!p._id) {
+      // Mock flow for demo data
+      setSaving(true);
+      setTimeout(() => { setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000); }, 900);
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await editarParte(p._id, payload);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      if (err.message?.includes('409') || err.message?.toLowerCase().includes('conflicto')) {
+        setShowConflictModal(true);
+      } else {
+        setSaveError(err.message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function handleSave() {
-    setSaving(true);
-    setTimeout(() => {
-      setSaving(false); setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    }, 900);
+    if (!editFields.observacion.trim() || editFields.observacion.trim().length < 5) {
+      setSaveError('El motivo del cambio debe tener al menos 5 caracteres.');
+      return;
+    }
+    const payload = {
+      motivo:     editFields.observacion.trim(),
+      usuario_id: USUARIO_ID_DEFAULT,
+      version:    p.version ?? 1,
+    };
+    const rawCodEpec = parseInt(editFields.cod_epec);
+    if (!isNaN(rawCodEpec)) payload.cod_epec = rawCodEpec;
+    const rawOrd = parseInt(String(editFields.ord_nro).replace(/^CE-/i, ''));
+    if (!isNaN(rawOrd)) payload.ord_nro = rawOrd;
+    if (editFields.medidor) payload.nro_medidor_colocado = editFields.medidor;
+    callEditarParte(payload);
   }
+
+  async function handleAprobar() {
+    const motivo = 'Aprobado por auditor';
+    if (!p._id) {
+      setApproving(true);
+      setTimeout(() => setApproving(false), 800);
+      return;
+    }
+    setApproving(true);
+    try {
+      await editarParte(p._id, { id_estado: 1, motivo, usuario_id: USUARIO_ID_DEFAULT, version: p.version ?? 1 });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      if (err.message?.includes('409') || err.message?.toLowerCase().includes('conflicto')) {
+        setShowConflictModal(true);
+      } else {
+        setSaveError(err.message);
+      }
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  async function handleRechazar() {
+    if (!rejectMotivo.trim() || rejectMotivo.trim().length < 5) return;
+    setRejecting(true);
+    setShowRejectModal(false);
+    if (!p._id) {
+      setTimeout(() => setRejecting(false), 800);
+      return;
+    }
+    try {
+      await editarParte(p._id, { id_estado: 3, motivo: rejectMotivo.trim(), usuario_id: USUARIO_ID_DEFAULT, version: p.version ?? 1 });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      if (err.message?.includes('409') || err.message?.toLowerCase().includes('conflicto')) {
+        setShowConflictModal(true);
+      } else {
+        setSaveError(err.message);
+      }
+    } finally {
+      setRejecting(false);
+    }
+  }
+
   function handleOracleQuery() {
     setOracleLoading(true);
     setOracleResult(null);
+    // Oracle sigue siendo mock (sin endpoint real todavía)
     setTimeout(() => {
-      setOracleResult({ ok: true, ord_nro: editFields.ord_nro, tor: 'CE', estado: 'VÁLIDO', srv: '412881', fecha_cierre: '15/04/2025' });
+      setOracleResult({ ok: true, ord_nro: editFields.ord_nro, tor: 'CE', estado: 'VÁLIDO', srv: p.suministro || '412881', fecha_cierre: '15/04/2025' });
       setOracleLoading(false);
     }, 1400);
   }
@@ -130,7 +256,7 @@ export function DetallePartes({ parte, onBack }) {
     modalFooter: { padding: '12px 18px', borderTop: '1px solid #eaeeec', display: 'flex', gap: 8, justifyContent: 'flex-end' },
   };
 
-  const photoCount = getPartePhotos(p.id).length;
+  const photoCount = (p.cant_imagenes != null && p._id) ? p.cant_imagenes : getPartePhotos(p.id).length;
 
   return (
     <div style={dS.root}>
@@ -145,11 +271,11 @@ export function DetallePartes({ parte, onBack }) {
             <StatusChip label={p.estado} config={ec} />
           </div>
           <div style={dS.meta}>
-            {p.contratista} · {p.operario} · {p.fecha} · Suministro {p.suministro} · Lote {p.lote}
+            {p.contratista} · {p.operario} · {p.fecha} · Suministro {p.suministro} · Lote {p.lote || '—'}
           </div>
         </div>
         <div style={dS.headerRight}>
-          <span style={{ fontSize: 11, color: '#8f9c97' }}>v{p.version}</span>
+          <span style={{ fontSize: 11, color: '#8f9c97' }}>v{p.version ?? 1}</span>
           <button style={{ ...dS.backBtn, gap: 5 }} onClick={() => setTab('bitacora')}>
             <Icon name="clock" size={13} /> Bitácora
           </button>
@@ -181,20 +307,26 @@ export function DetallePartes({ parte, onBack }) {
                 <div style={dS.sectionHeader}>
                   <Icon name="file-text" size={14} color="#6b7772" />
                   <span style={dS.sectionTitle}>Datos del Excel</span>
-                  <span style={{ fontSize: 10.5, color: '#8f9c97' }}>Lote {p.lote}</span>
+                  <span style={{ fontSize: 10.5, color: '#8f9c97' }}>Lote {p.lote || '—'}</span>
                 </div>
                 <div style={dS.rawGrid}>
                   {[
-                    ['Suministro', p.suministro], ['Operario', p.operario],
-                    ['Fecha Parte', p.fecha], ['Contratista', p.contratista],
-                    ['Medidor Retirado', 'M' + (parseInt(p.medidor_dec?.slice(1) || '74829103') - 1000)], ['Medidor Colocado', p.medidor_dec],
-                    ['Lectura Ret.', '12847.5'], ['Lectura Col.', '0.0'],
-                    ['COD_EPEC Dec.', p.cod_epec], ['ORD_NRO Dec.', p.ord_nro],
-                    ['Observación App', 'Cambio programado CE'], ['COD_EPEC Sug. (Hamming)', '1004'],
+                    ['Suministro',        p.suministro],
+                    ['Operario',          p.operario],
+                    ['Fecha Parte',       p.fecha],
+                    ['Contratista',       p.contratista],
+                    ['Medidor Retirado',  p.nro_medidor_retirado || p.medidor_dec || '—'],
+                    ['Medidor Colocado',  p.nro_medidor_colocado || p.medidor_dec || '—'],
+                    ['COD_EPEC Dec.',     p.cod_epec],
+                    ['ORD_NRO Dec.',      p.ord_nro],
+                    ['USES (origen)',     p.valor_uses_origen != null ? p.valor_uses_origen : p.uses],
+                    ['USES (obs)',        p.valor_uses_obs ?? '—'],
+                    ['Diferencia USES',   p.diferencia_uses ?? '—'],
+                    ['Tipo Discrepancia', p.tipo_discrepancia ?? '—'],
                   ].map(([label, val]) => (
                     <div key={label} style={dS.rawCell}>
                       <div style={dS.rawLabel}>{label}</div>
-                      <div style={dS.rawValue}>{val}</div>
+                      <div style={dS.rawValue}>{val ?? '—'}</div>
                     </div>
                   ))}
                 </div>
@@ -230,9 +362,8 @@ export function DetallePartes({ parte, onBack }) {
                   <span style={dS.sectionTitle}>Diferencias con SIGEC</span>
                 </div>
                 {[
-                  { label: 'COD_EPEC', declarado: p.cod_epec, sigec: '1004', match: p.cod_epec === '1004' },
-                  { label: 'Medidor', declarado: p.medidor_dec, sigec: p.medidor_dec, match: true },
-                  { label: 'USES', declarado: '1.00', sigec: '1.25', match: false, delta: '+0.25', deltaOk: false },
+                  { label: 'COD_EPEC', declarado: p.cod_epec, sigec: p.cod_epec_sugerido ?? p.cod_epec, match: !p.cod_epec_sugerido || String(p.cod_epec) === String(p.cod_epec_sugerido) },
+                  { label: 'USES', declarado: p.valor_uses_origen ?? '1.00', sigec: p.valor_uses_obs ?? '1.25', match: false, delta: p.diferencia_uses != null ? `${p.diferencia_uses > 0 ? '+' : ''}${p.diferencia_uses}` : null, deltaOk: false },
                   { label: 'ORD_NRO', declarado: p.ord_nro === '—' ? '(sin orden)' : p.ord_nro, sigec: p.ord_nro === '—' ? '—' : p.ord_nro, match: p.ord_nro !== '—' },
                 ].map((row) => (
                   <div key={row.label} style={dS.diffRow}>
@@ -274,25 +405,18 @@ export function DetallePartes({ parte, onBack }) {
                   </div>
                 ))}
                 <div style={dS.fieldGroup}>
-                  <div style={dS.fieldLabel}>Traza Calidad</div>
-                  <select
-                    style={dS.fieldSelect}
-                    value={editFields.traza}
-                    onChange={(e) => setEditFields((prev) => ({ ...prev, traza: e.target.value }))}
-                  >
-                    {Object.keys(TRAZA_CONFIG).map((t) => (<option key={t} value={t}>{t}</option>))}
-                  </select>
-                </div>
-                <div style={dS.fieldGroup}>
-                  <div style={dS.fieldLabel}>Observación (auditor)</div>
+                  <div style={dS.fieldLabel}>Motivo del cambio <span style={{ color: '#c0392b' }}>*</span></div>
                   <textarea
                     style={{ ...dS.fieldInput, fontFamily: 'inherit', height: 72, resize: 'vertical', lineHeight: 1.4 }}
-                    placeholder="Ingrese justificación del cambio…"
+                    placeholder="Mínimo 5 caracteres — obligatorio para guardar…"
                     value={editFields.observacion}
-                    onChange={(e) => setEditFields((prev) => ({ ...prev, observacion: e.target.value }))}
+                    onChange={(e) => { setEditFields((prev) => ({ ...prev, observacion: e.target.value })); setSaveError(null); }}
                     onFocus={(e) => (e.target.style.borderColor = '#124e2f')}
                     onBlur={(e) => (e.target.style.borderColor = '#d5ddd9')}
                   />
+                  {saveError && (
+                    <div style={{ fontSize: 11, color: '#c0392b', marginTop: 4 }}>{saveError}</div>
+                  )}
                 </div>
 
                 <div style={{ marginTop: 4 }}>
@@ -300,8 +424,7 @@ export function DetallePartes({ parte, onBack }) {
                   <button style={dS.oracleBtn} onClick={handleOracleQuery} disabled={oracleLoading}>
                     {oracleLoading
                       ? <><Icon name="loader" size={13} /> Consultando SIGEC…</>
-                      : <><Icon name="database" size={13} /> Consultar Oracle ahora</>
-                    }
+                      : <><Icon name="database" size={13} /> Consultar Oracle ahora</>}
                   </button>
                   {oracleResult && (
                     <div style={dS.oracleResult}>
@@ -318,7 +441,11 @@ export function DetallePartes({ parte, onBack }) {
               </div>
 
               <div style={dS.sidePanelFooter}>
-                <button style={{ ...dS.saveBtn, background: saved ? '#1d8348' : '#124e2f' }} onClick={handleSave} disabled={saving}>
+                <button
+                  style={{ ...dS.saveBtn, background: saved ? '#1d8348' : saving ? '#4a7a60' : '#124e2f', cursor: saving ? 'wait' : 'pointer' }}
+                  onClick={handleSave}
+                  disabled={saving}
+                >
                   {saving ? <><Icon name="loader" size={13} /> Guardando…</>
                     : saved  ? <><Icon name="check"  size={13} /> Guardado</>
                     :          <><Icon name="send"   size={13} /> Guardar cambios</>}
@@ -334,15 +461,27 @@ export function DetallePartes({ parte, onBack }) {
               <div style={{ padding: '12px 16px', borderBottom: '1px solid #eaeeec', background: '#fafcfb', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Icon name="clock" size={14} color="#6b7772" />
                 <span style={{ fontSize: 12, fontWeight: 700, color: '#2f3733' }}>Bitácora de Auditoría — {p.id}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#8f9c97' }}>Registro inmutable</span>
+                <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#8f9c97' }}>
+                  {p._id ? 'Registro real (API)' : 'Datos de demostración'}
+                </span>
                 <Icon name="lock" size={12} color="#b5bfbb" />
               </div>
               <div style={{ padding: '8px 16px' }}>
-                {BITACORA_EVENTS.map((ev, i) => {
+                {bitacoraLoading && (
+                  <div style={{ padding: 20, textAlign: 'center', color: '#8f9c97', fontSize: 12 }}>
+                    <Icon name="loader" size={16} color="#8f9c97" /> Cargando bitácora…
+                  </div>
+                )}
+                {!bitacoraLoading && bitacora?.length === 0 && (
+                  <div style={{ padding: 20, textAlign: 'center', color: '#8f9c97', fontSize: 12 }}>
+                    Sin registros de auditoría para este parte.
+                  </div>
+                )}
+                {!bitacoraLoading && bitacora && bitacora.map((ev, i) => {
                   const c = BITACORA_COLORS[ev.type] || BITACORA_COLORS.system;
                   return (
                     <div key={i} style={{ display: 'flex', gap: 12, paddingBottom: 16, position: 'relative' }}>
-                      {i < BITACORA_EVENTS.length - 1 && (
+                      {i < bitacora.length - 1 && (
                         <div style={{ position: 'absolute', left: 14, top: 26, bottom: 0, width: 1, background: '#eaeeec' }} />
                       )}
                       <div style={{ width: 28, height: 28, borderRadius: 14, background: c.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
@@ -352,12 +491,20 @@ export function DetallePartes({ parte, onBack }) {
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: '#2f3733' }}>{ev.actor}</span>
                           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: '#8f9c97' }}>{ev.ts}</span>
+                          {ev.version && (
+                            <span style={{ fontSize: 10, color: '#b5bfbb', fontFamily: "'JetBrains Mono', monospace" }}>v{ev.version}</span>
+                          )}
                         </div>
                         <div style={{ fontSize: 12, color: '#4a5550', marginTop: 2, lineHeight: 1.45 }}>{ev.action}</div>
                       </div>
                     </div>
                   );
                 })}
+                {bitacoraError && (
+                  <div style={{ padding: '8px 0', fontSize: 11, color: '#c0392b' }}>
+                    Error cargando bitácora: {bitacoraError}. Mostrando datos de demostración.
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -367,39 +514,18 @@ export function DetallePartes({ parte, onBack }) {
       <div style={dS.actionFooter}>
         <span style={{ fontSize: 11.5, color: '#8f9c97', flex: 1 }}>
           {p.estado === 'Aprobado' ? 'Parte ya aprobado' : 'Aprobar o rechazar este parte'}
+          {!p._id && <span style={{ marginLeft: 8, color: '#b5bfbb', fontSize: 10.5 }}>(demo — acciones simuladas)</span>}
         </span>
         <button style={dS.annulBtn} onClick={() => setShowRejectModal(true)}>
           <Icon name="slash" size={13} /> Anular
         </button>
-        <button style={dS.rejectBtn} onClick={() => setShowRejectModal(true)}>
-          <Icon name="x-circle" size={13} /> Rechazar
+        <button style={dS.rejectBtn} onClick={() => setShowRejectModal(true)} disabled={rejecting}>
+          {rejecting ? <><Icon name="loader" size={13} /> Rechazando…</> : <><Icon name="x-circle" size={13} /> Rechazar</>}
         </button>
-        <button style={dS.approveBtn}>
-          <Icon name="check-circle" size={13} /> Aprobar
+        <button style={dS.approveBtn} onClick={handleAprobar} disabled={approving}>
+          {approving ? <><Icon name="loader" size={13} /> Aprobando…</> : <><Icon name="check-circle" size={13} /> Aprobar</>}
         </button>
       </div>
-
-      {showOracleModal && (
-        <div style={dS.overlay} onClick={() => setShowOracleModal(false)}>
-          <div style={dS.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={dS.modalHeader}>
-              <Icon name="database" size={16} color="#124e2f" />
-              <span style={dS.modalTitle}>Cruce Manual con Oracle</span>
-              <button style={{ border: 'none', background: 'transparent', cursor: 'pointer' }} onClick={() => setShowOracleModal(false)}>
-                <Icon name="x" size={16} color="#8f9c97" />
-              </button>
-            </div>
-            <div style={dS.modalBody}>
-              <div style={{ fontSize: 12, color: '#4a5550', marginBottom: 12 }}>Ingresar ORD_NRO para validar contra SIGEC (TOR='CE', estado VÁLIDO).</div>
-              <input style={{ ...dS.fieldInput, width: '100%', boxSizing: 'border-box' }} placeholder="CE-XXXXXX" defaultValue={p.ord_nro} />
-            </div>
-            <div style={dS.modalFooter}>
-              <button style={dS.annulBtn} onClick={() => setShowOracleModal(false)}>Cancelar</button>
-              <button style={dS.approveBtn} onClick={() => setShowOracleModal(false)}>Consultar</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showRejectModal && (
         <div style={dS.overlay} onClick={() => setShowRejectModal(false)}>
@@ -412,17 +538,19 @@ export function DetallePartes({ parte, onBack }) {
               </button>
             </div>
             <div style={dS.modalBody}>
-              <div style={{ fontSize: 12, color: '#4a5550', marginBottom: 12 }}>Ingrese el motivo de rechazo (obligatorio):</div>
+              <div style={{ fontSize: 12, color: '#4a5550', marginBottom: 12 }}>Ingrese el motivo de rechazo (mínimo 5 caracteres):</div>
               <textarea
-                style={{ ...dS.fieldInput, width: '100%', boxSizing: 'border-box', height: 80, fontFamily: 'inherit', resize: 'vertical' }}
+                style={{ width: '100%', padding: '6px 9px', border: '1px solid #d5ddd9', borderRadius: 4, fontSize: 12, fontFamily: 'inherit', height: 80, resize: 'vertical', boxSizing: 'border-box', outline: 'none' }}
                 placeholder="Describa el motivo del rechazo…"
                 value={rejectMotivo}
                 onChange={(e) => setRejectMotivo(e.target.value)}
+                onFocus={(e) => (e.target.style.borderColor = '#124e2f')}
+                onBlur={(e) => (e.target.style.borderColor = '#d5ddd9')}
               />
             </div>
             <div style={dS.modalFooter}>
               <button style={dS.annulBtn} onClick={() => setShowRejectModal(false)}>Cancelar</button>
-              <button style={dS.rejectBtn} disabled={!rejectMotivo.trim()} onClick={() => setShowRejectModal(false)}>
+              <button style={{ ...dS.rejectBtn, opacity: rejectMotivo.trim().length < 5 ? 0.5 : 1 }} disabled={rejectMotivo.trim().length < 5} onClick={handleRechazar}>
                 Confirmar Rechazo
               </button>
             </div>
@@ -439,13 +567,13 @@ export function DetallePartes({ parte, onBack }) {
             </div>
             <div style={dS.modalBody}>
               <div style={{ padding: '10px 12px', background: '#fff3cd', borderRadius: 4, fontSize: 12, color: '#7a4a00', lineHeight: 1.5 }}>
-                <strong>Versión desactualizada.</strong> Otro usuario modificó este parte mientras estabas editando (v{p.version} → v{p.version + 1}).
-                Tus cambios no fueron guardados. Recargá para ver la versión más reciente.
+                <strong>Versión desactualizada.</strong> Otro usuario modificó este parte (v{p.version} → v{(p.version ?? 1) + 1}).
+                Tus cambios no fueron guardados. Volvé a la bandeja y reabrí el parte para ver la versión más reciente.
               </div>
             </div>
             <div style={dS.modalFooter}>
-              <button style={dS.approveBtn} onClick={() => setShowConflictModal(false)}>
-                <Icon name="refresh-cw" size={13} /> Recargar
+              <button style={dS.approveBtn} onClick={() => { setShowConflictModal(false); onBack(); }}>
+                <Icon name="arrow-left" size={13} /> Volver a bandeja
               </button>
             </div>
           </div>

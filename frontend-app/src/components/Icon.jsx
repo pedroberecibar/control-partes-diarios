@@ -103,9 +103,11 @@ export const TRAZA_CONFIG = {
 export const LOTE_ESTADO_CONFIG = {
   'RECIBIDO':           { bg:'#dbeafe', color:'#0d4272' },
   'VALIDANDO':          { bg:'#fff3cd', color:'#7a4a00' },
+  'PROCESANDO':         { bg:'#fff3cd', color:'#7a4a00' },
   'EN_CORE':            { bg:'#fff3cd', color:'#7a4a00' },
   'EN_OBS':             { bg:'#fff3cd', color:'#7a4a00' },
   'OK':                 { bg:'#d4edda', color:'#155a2e' },
+  'PROCESADO_OK':       { bg:'#d4edda', color:'#155a2e' },
   'RECHAZADO_SINTAXIS': { bg:'#fde8e8', color:'#7a1c1c' },
   'ERROR':              { bg:'#fde8e8', color:'#7a1c1c' },
 };

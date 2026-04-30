@@ -51,6 +51,22 @@ def procesar_lote_en_background(lote_id: int) -> None:
             db.commit()
             return
 
+        # Validación temprana: el archivo debe pertenecer a la contratista declarada.
+        contratista_detectado = _detectar_contratista_archivo(Path(lote.ruta_archivo))
+        if contratista_detectado is not None and contratista_detectado != contratista.nombre.upper():
+            lote.estado = "RECHAZADO_SINTAXIS"
+            lote.detalle_error = (
+                f"El archivo parece corresponder a {contratista_detectado} "
+                f"pero el lote fue registrado para {contratista.nombre}. "
+                "Verificá que subiste el archivo correcto."
+            )
+            db.commit()
+            log.warning(
+                "Lote %d rechazado: archivo detectado como %s pero declarado como %s.",
+                lote_id, contratista_detectado, contratista.nombre,
+            )
+            return
+
         lote.estado = "PROCESANDO"
         db.commit()
 
@@ -61,7 +77,7 @@ def procesar_lote_en_background(lote_id: int) -> None:
 
             df_final, df_img = _ejecutar_motor_analitico(contratista.nombre, df_aux)
             if df_final is None or df_final.empty:
-                raise ValueError("El motor analítico no produjo resultados para este lote.")
+                raise ValueError("El motor analítico no pudo procesar el lote (output vacío tras core y etapa4).")
 
             metricas = ParteImportService(db).importar_lote(
                 lote_id=lote.id,
@@ -137,4 +153,60 @@ def _ejecutar_motor_analitico(
         return df_contratista, None
 
     df_final, df_img, _metricas4 = procesar_etapa4(df_fact_input=df_contratista)
+
+    # Si etapa4 no produjo aprobados (todos "Sin Orden Asociada" u otro estado
+    # no-aprobado), usar el output normalizado del core directamente.
+    # Los campos de obs/USES quedarán NULL — comportamiento correcto y esperado.
+    if df_final is None or df_final.empty:
+        log.info(
+            "WORKER motor — etapa4 sin aprobados; importando %d partes desde core (ID_ESTADO≠1).",
+            len(df_contratista),
+        )
+        return df_contratista, None
+
     return df_final, df_img
+
+
+# ----------------------------------------------------------------------
+# Detección de contratista por firma de columnas
+# ----------------------------------------------------------------------
+
+# Columnas exclusivas de cada contratista (no aparecen en el otro).
+_FIRMA_CONECTAR = frozenset({"Cuadrilla", "Vehiculos", "Personas", "Obra"})
+_FIRMA_COOPLYF  = frozenset({"Tipo de trabajo", "TipoTrabajo", "codTiposTrabajos"})
+
+# Filas de encabezado a intentar (mismo criterio que el adapter CONECTAR).
+_HEADER_CANDIDATOS = (0, 1, 2, 3, 4)
+
+
+def _detectar_contratista_archivo(path: Path) -> str | None:
+    """Lee solo los encabezados del archivo y detecta la contratista por firma de columnas.
+
+    Devuelve "CONECTAR", "COOPLYF", o None si no puede determinarlo.
+    """
+    nombre = path.name.lower()
+    col_sets: list[set[str]] = []
+
+    if nombre.endswith(".csv"):
+        for sep, enc in ((",", "utf-8"), (";", "latin-1")):
+            try:
+                df = pd.read_csv(path, sep=sep, nrows=1, dtype=str, encoding=enc)
+                if df.shape[1] >= 2:
+                    col_sets.append({c.strip() for c in df.columns})
+                    break
+            except Exception:
+                continue
+    else:
+        for h in _HEADER_CANDIDATOS:
+            try:
+                df = pd.read_excel(path, header=h, nrows=1, dtype=str)
+                col_sets.append({c.strip() for c in df.columns})
+            except Exception:
+                continue
+
+    for cols in col_sets:
+        if cols & _FIRMA_CONECTAR:
+            return "CONECTAR"
+        if cols & _FIRMA_COOPLYF:
+            return "COOPLYF"
+    return None
