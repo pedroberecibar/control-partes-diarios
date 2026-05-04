@@ -22,7 +22,7 @@ router = APIRouter()
 @router.get("/", response_model=ParteListResponse, summary="Listar partes procesados")
 def listar_partes(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=5000),
     id_estado: int | None = Query(None, description="Filtrar por estado (1:Aprobado, 2:Revisión, 3:Rechazado, 4:FueraAlcance)"),
     suministro: str | None = Query(None, description="Filtrar por suministro exacto"),
     ord_nro: int | None = Query(None, description="Filtrar por nro de ordenativo"),

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon, PARTE_ESTADO_CONFIG, StatusChip, TRAZA_CONFIG } from '../components/Icon';
 import { VisorModal } from '../components/visor/Visor';
-import { getPartePhotos } from '../data/visorMock';
-import { PARTES } from '../data/partesMock';
 import { getPartes } from '../api/partesApi';
 import { normalizeParte } from '../api/normalizers';
 
@@ -24,7 +22,8 @@ const COLS = [
 ];
 
 export function BandejaAuditoria({ onOpenDetalle }) {
-  const [partes, setPartes]           = useState(PARTES);
+  const [partes, setPartes]           = useState([]);
+  const [loading, setLoading]         = useState(true);
   const [usingMock, setUsingMock]     = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [filters, setFilters]         = useState({ traza: [], estado: [], contratista: [], lote: '', search: '' });
@@ -36,10 +35,25 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
   useEffect(() => {
     let cancelled = false;
-    getPartes({ limit: 500 })
-      .then((res) => {
+    setLoading(true);
+
+    const PAGE_SIZE = 1000;
+    async function fetchAll() {
+      const allItems = [];
+      let skip = 0;
+      while (true) {
+        const res = await getPartes({ skip, limit: PAGE_SIZE });
+        allItems.push(...res.items);
+        if (allItems.length >= res.total || res.items.length < PAGE_SIZE) break;
+        skip += PAGE_SIZE;
+      }
+      return allItems;
+    }
+
+    fetchAll()
+      .then((items) => {
         if (!cancelled) {
-          setPartes(res.items.map(normalizeParte));
+          setPartes(items.map(normalizeParte));
           setUsingMock(false);
           setFilters({ traza: [], estado: [], contratista: [], lote: '', search: '' });
           setPage(1);
@@ -47,6 +61,9 @@ export function BandejaAuditoria({ onOpenDetalle }) {
       })
       .catch(() => {
         if (!cancelled) setUsingMock(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
   }, []);
@@ -296,7 +313,24 @@ export function BandejaAuditoria({ onOpenDetalle }) {
         )}
 
         <div style={bS.tableWrap}>
-          <table style={bS.table}>
+          {loading && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', color: '#8f9c97', fontSize: 13 }}>
+              Cargando partes…
+            </div>
+          )}
+          {!loading && sorted.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: 8 }}>
+              <Icon name={usingMock ? 'alert-circle' : 'inbox'} size={28} color="#d5ddd9" />
+              <span style={{ fontSize: 13, color: '#8f9c97' }}>
+                {usingMock
+                  ? 'No se pudo conectar al backend.'
+                  : activeFilterCount > 0
+                    ? 'No hay partes que coincidan con los filtros activos.'
+                    : 'No hay partes procesados aún. Cargá un lote para comenzar.'}
+              </span>
+            </div>
+          )}
+          {!loading && sorted.length > 0 && <table style={bS.table}>
             <thead>
               <tr>
                 <th style={{ ...bS.th, width: 36, padding: 8 }}>
@@ -322,10 +356,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
                 const ec = PARTE_ESTADO_CONFIG[row.estado] || {};
                 const isDanger = TRAZAS_DANGER.includes(row.traza);
                 const baseBg = selected ? '#edf5f0' : isDanger ? '#fff9f9' : i % 2 === 0 ? 'white' : '#fafcfb';
-                // Use cant_imagenes from API data; fall back to mock photo count for demo data
-                const photoCount = row.cant_imagenes != null && !usingMock
-                  ? row.cant_imagenes
-                  : getPartePhotos(row.id).length;
+                const photoCount = row.cant_imagenes ?? 0;
                 return (
                   <tr
                     key={row.id}
@@ -402,7 +433,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
                 );
               })}
             </tbody>
-          </table>
+          </table>}
         </div>
 
         <div style={bS.pagination}>

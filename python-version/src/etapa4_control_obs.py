@@ -333,13 +333,15 @@ def _calcular_discrepancia(df: pd.DataFrame) -> pd.DataFrame:
     df["DIFERENCIA_USES_ABS"] = diff.abs()
 
     # IMPORTANTE: orden EXACTO de las condiciones (matchea F.when().when().otherwise() de Spark).
+    # dtype=bool, na_value=False es necesario para nullable types (Int64, BooleanArray):
+    # sin este argumento, .to_numpy() devuelve object array cuando hay pd.NA, y numpy 2.x lo rechaza.
     cond = [
-        df["VALOR_USES_ORIGEN"].isna().to_numpy(),
-        (~df["_REGLA_MATCH"]).to_numpy(),
-        df["_SIN_OBS"].to_numpy(),
-        (df["CODIGO_EPEC"] == df["COD_EPEC_SUGERIDO"]).to_numpy(),
-        (df["DIFERENCIA_USES"].fillna(0) == 0).to_numpy(),
-        (df["DIFERENCIA_USES"].fillna(0) > 0).to_numpy(),
+        df["VALOR_USES_ORIGEN"].isna().to_numpy(dtype=bool, na_value=False),
+        (~df["_REGLA_MATCH"]).to_numpy(dtype=bool, na_value=False),
+        df["_SIN_OBS"].to_numpy(dtype=bool, na_value=False),
+        (df["CODIGO_EPEC"] == df["COD_EPEC_SUGERIDO"]).to_numpy(dtype=bool, na_value=False),
+        (df["DIFERENCIA_USES"].fillna(0) == 0).to_numpy(dtype=bool, na_value=False),
+        (df["DIFERENCIA_USES"].fillna(0) > 0).to_numpy(dtype=bool, na_value=False),
     ]
     choice = [
         "Sin Regla Definida",

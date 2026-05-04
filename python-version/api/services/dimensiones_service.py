@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 @lru_cache(maxsize=1)
 def _traza_map() -> dict[int, str]:
     df = io.read_table("dim_traza_calidad_bi", capa="dim")
-    return {int(k): str(v) for k, v in df.set_index("ID_TRAZA")["TRAZA_CALIDAD"].items()}
+    return {int(k): str(v) for k, v in df.set_index("ID_TRAZA")["DESC_TRAZA"].items()}
 
 
 @lru_cache(maxsize=1)

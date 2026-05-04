@@ -7,11 +7,31 @@ import { getAuditoria } from '../api/auditoriaApi';
 
 const USUARIO_ID_DEFAULT = 1; // placeholder hasta wiring de auth
 
-const CRUCE_RESULTS = {
-  A: { match: true,  detail: 'ORD_NRO CE-482301 encontrada en dim_ord. TOR=CE, estado=VÁLIDO, SRV_CODIGO coincide.' },
-  B: { match: true,  detail: 'Medidor declarado M74829103 presente en SIGEC para SRV_CODIGO=412881. USES=1.00.' },
-  C: { match: false, detail: 'COD_EPEC declarado 1003 difiere del SIGEC (1004). Flag: USES_DIFF = +0.25.' },
-};
+function buildCruces(p) {
+  const ordMatch = p.ord_nro && p.ord_nro !== '—';
+  const usesMatch = p.diferencia_uses == null || p.diferencia_uses === 0;
+  const codMatch = !p.cod_epec_sugerido || String(p.cod_epec) === String(p.cod_epec_sugerido);
+  return {
+    A: {
+      match: ordMatch,
+      detail: ordMatch
+        ? `ORD_NRO ${p.ord_nro} encontrada en dim_ord.`
+        : 'No se encontró ordenativo para este suministro.',
+    },
+    B: {
+      match: usesMatch,
+      detail: usesMatch
+        ? `USES declarado (${p.valor_uses_origen ?? '—'}) coincide con SIGEC.`
+        : `Diferencia USES detectada: ${p.diferencia_uses > 0 ? '+' : ''}${p.diferencia_uses} (declarado ${p.valor_uses_origen ?? '—'} vs SIGEC ${p.valor_uses_obs ?? '—'}).`,
+    },
+    C: {
+      match: codMatch,
+      detail: codMatch
+        ? `COD_EPEC ${p.cod_epec} coincide con SIGEC.`
+        : `COD_EPEC declarado ${p.cod_epec} difiere del SIGEC (${p.cod_epec_sugerido}).${p.diferencia_uses != null && p.diferencia_uses !== 0 ? ` Flag: USES_DIFF = ${p.diferencia_uses > 0 ? '+' : ''}${p.diferencia_uses}.` : ''}`,
+    },
+  };
+}
 
 const BITACORA_COLORS = {
   system:  { icon: 'circle',        color: '#b5bfbb', bg: '#f5f7f6' },
@@ -338,7 +358,7 @@ export function DetallePartes({ parte, onBack }) {
                   <span style={dS.sectionTitle}>Cruces Aplicados</span>
                   <span style={{ fontSize: 10.5, color: '#6b7772' }}>Waterfall A → B → C</span>
                 </div>
-                {Object.entries(CRUCE_RESULTS).map(([key, cruce]) => (
+                {Object.entries(buildCruces(p)).map(([key, cruce]) => (
                   <div key={key} style={dS.cruceRow}>
                     <div style={{ ...dS.cruceBadge, background: cruce.match ? '#d4edda' : '#fde8e8', color: cruce.match ? '#155a2e' : '#7a1c1c' }}>
                       {key}
@@ -363,7 +383,7 @@ export function DetallePartes({ parte, onBack }) {
                 </div>
                 {[
                   { label: 'COD_EPEC', declarado: p.cod_epec, sigec: p.cod_epec_sugerido ?? p.cod_epec, match: !p.cod_epec_sugerido || String(p.cod_epec) === String(p.cod_epec_sugerido) },
-                  { label: 'USES', declarado: p.valor_uses_origen ?? '1.00', sigec: p.valor_uses_obs ?? '1.25', match: false, delta: p.diferencia_uses != null ? `${p.diferencia_uses > 0 ? '+' : ''}${p.diferencia_uses}` : null, deltaOk: false },
+                  { label: 'USES', declarado: p.valor_uses_origen ?? '—', sigec: p.valor_uses_obs ?? '—', match: p.diferencia_uses == null || p.diferencia_uses === 0, delta: p.diferencia_uses != null && p.diferencia_uses !== 0 ? `${p.diferencia_uses > 0 ? '+' : ''}${p.diferencia_uses}` : null, deltaOk: false },
                   { label: 'ORD_NRO', declarado: p.ord_nro === '—' ? '(sin orden)' : p.ord_nro, sigec: p.ord_nro === '—' ? '—' : p.ord_nro, match: p.ord_nro !== '—' },
                 ].map((row) => (
                   <div key={row.label} style={dS.diffRow}>

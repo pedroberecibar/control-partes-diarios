@@ -4,7 +4,7 @@ export function getPartes(params = {}) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v != null && v !== '')
   );
-  return apiFetch(`/api/v1/partes?${qs}`);
+  return apiFetch(`/api/v1/partes/?${qs}`);
 }
 
 export const getParte = (id) => apiFetch(`/api/v1/partes/${id}`);

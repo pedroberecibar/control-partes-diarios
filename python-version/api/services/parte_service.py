@@ -20,7 +20,7 @@ from typing import Iterable
 from sqlalchemy.orm import Session
 
 from api.db.models.base_models import Contratista
-from api.db.models.domain_models import ParteDiarioProcesado, AuditoriaCambio
+from api.db.models.domain_models import ParteDiarioProcesado, ParteDiarioRaw, AuditoriaCambio
 from api.schemas.parte_schemas import (
     ObservacionesAppDTO,
     ParteEditRequest,
@@ -82,13 +82,18 @@ class ParteService:
             .all()
         )
 
-        # Pre-cargar nombres de contratistas para evitar N+1 en el list view
+        # Pre-cargar contratistas e id_externo para evitar N+1
         contratistas_map = self._contratistas_por_id(items)
+        id_externos_map = self._id_externos_por_raw_id(items)
 
         return ParteListResponse(
             total=total,
             items=[
-                self._to_resumen_dto(p, contratistas_map.get(p.contratista_id))
+                self._to_resumen_dto(
+                    p,
+                    contratistas_map.get(p.contratista_id),
+                    id_externos_map.get(p.raw_id),
+                )
                 for p in items
             ],
         )
@@ -217,6 +222,7 @@ class ParteService:
         self,
         parte: ParteDiarioProcesado,
         contratista_nombre: str | None,
+        id_externo: str | None = None,
     ) -> ParteResumenResponse:
         return ParteResumenResponse(
             id=parte.id,
@@ -229,7 +235,11 @@ class ParteService:
             estado=dims.estado(parte.id_estado),
             id_traza=parte.id_traza,
             traza_calidad=dims.traza(parte.id_traza),
+            contratista_id=parte.contratista_id,
             contratista=contratista_nombre,
+            operario_nombre=dims.operario(parte.usr_id),
+            id_externo=id_externo,
+            valor_uses=parte.valor_uses_origen,
             cant_imagenes=len(parte.imagenes),
             fue_corregido=parte.fue_corregido,
             anulado=parte.anulado,
@@ -290,3 +300,16 @@ class ParteService:
             .all()
         )
         return {row.id: row.nombre for row in rows}
+
+    def _id_externos_por_raw_id(
+        self, partes: Iterable[ParteDiarioProcesado]
+    ) -> dict[int, str]:
+        raw_ids = {p.raw_id for p in partes if p.raw_id is not None}
+        if not raw_ids:
+            return {}
+        rows = (
+            self.db.query(ParteDiarioRaw.id, ParteDiarioRaw.id_externo)
+            .filter(ParteDiarioRaw.id.in_(raw_ids))
+            .all()
+        )
+        return {row.id: row.id_externo for row in rows if row.id_externo}

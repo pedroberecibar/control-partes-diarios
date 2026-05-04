@@ -3,6 +3,7 @@ numpy>=1.26,<3.0
 pyarrow>=15.0
 openpyxl>=3.1
 python-dateutil>=2.9
+python-multipart>=0.0.12
 
 # Oracle (etapa 0 — extracción de seeds desde SIGEC PRODEBS_SEE).
 # Requiere Instant Client en disco (ej. C:\Oracle\instantclient_23_6).

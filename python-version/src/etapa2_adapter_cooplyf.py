@@ -62,7 +62,7 @@ MAPA_RENOMBRES: dict[str, str] = {
 COLS_FINAL = [
     "ID_Externo", "Fecha", "Suministro",
     "medidorColocado", "medidorRetirado",
-    "codTiposManoObra", "TipoTrabajo", "ORIGEN_ARCHIVO",
+    "codTiposManoObra", "TipoTrabajo", "ORIGEN_ARCHIVO", "TRAZA_ADAPTER",
 ]
 
 COLS_LIMPIAR_DECIMALES = [
@@ -154,12 +154,15 @@ def procesar_archivo(path: Path) -> tuple[pd.DataFrame | None, dict]:
         if c not in df.columns:
             df[c] = None
 
-    # Parseo de fechas + descarte de filas con "Total" o fecha no parseable
+    # Parseo de fechas — descarta filas de totales (no son partes reales),
+    # pero conserva filas con fecha inválida marcándolas con TRAZA_ADAPTER.
     if "Fecha" in df.columns:
-        df = df.loc[~df["Fecha"].astype(str).str.contains("Total", case=False, na=False)]
+        df = df.loc[~df["Fecha"].astype(str).str.contains("Total", case=False, na=False)].copy()
         fechas = _parsear_fechas_smart(df["Fecha"])
-        df = df.loc[fechas.notna()]
+        mask_fecha_invalida = fechas.isna()
         df["Fecha"] = fechas.dt.strftime("%Y-%m-%d")
+        df.loc[mask_fecha_invalida, "TRAZA_ADAPTER"] = "Fecha Inválida"
+        df.loc[mask_fecha_invalida, "Fecha"] = None
 
     # Limpieza de decimales espurios en columnas numérico-string
     for c in COLS_LIMPIAR_DECIMALES:

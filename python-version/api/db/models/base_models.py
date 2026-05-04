@@ -35,3 +35,7 @@ class LoteArchivo(Base):
 
     contratista = relationship("Contratista")
     usuario = relationship("UsuarioApp")
+
+    @property
+    def contratista_nombre(self) -> str | None:
+        return self.contratista.nombre if self.contratista else None

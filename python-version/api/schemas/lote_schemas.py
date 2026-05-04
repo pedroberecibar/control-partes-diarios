@@ -31,6 +31,7 @@ class LoteResponse(BaseModel):
     nombre_archivo: str
     hash_archivo: str
     contratista_id: int
+    contratista_nombre: Optional[str] = None
     estado: str
     subido_por: int
     fecha_subida: datetime

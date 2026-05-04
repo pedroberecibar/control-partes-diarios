@@ -601,9 +601,11 @@ def ensamblar_waterfall(
          pisar medidorColocado/Retirado con db_colocado/db_retirado.
     """
     # 1. Concat resultados de los 3 cruces (mismo schema canónico).
-    df_resultados = pd.concat(
-        [df_resultados_A, df_resultados_B, df_resultados_C],
-        ignore_index=True, sort=False,
+    # Filtrar vacíos evita FutureWarning de pandas sobre all-NA columns en concat.
+    _partes = [df for df in [df_resultados_A, df_resultados_B, df_resultados_C] if not df.empty]
+    df_resultados = (
+        pd.concat(_partes, ignore_index=True, sort=False)
+        if _partes else _resultado_vacio()
     )
 
     # 2. Left join con df_base por _row_id.
@@ -642,6 +644,14 @@ def ensamblar_waterfall(
     mask_correccion = df_full["TRAZA_CALIDAD"].isin(config.TRAZAS_CORRECCION_MEDIDOR)
     df_full.loc[mask_correccion, "medidorColocado"] = df_full.loc[mask_correccion, "db_colocado"]
     df_full.loc[mask_correccion, "medidorRetirado"] = df_full.loc[mask_correccion, "db_retirado"]
+
+    # 7. Override TRAZA_CALIDAD con TRAZA_ADAPTER del adapter (Fecha Inválida, Código No Mapeado).
+    #    El adapter marca filas que no superaron validación básica antes del waterfall.
+    #    Esta asignación tiene máxima prioridad — pisa cualquier traza del waterfall.
+    if "TRAZA_ADAPTER" in df_full.columns:
+        mask_adapter = df_full["TRAZA_ADAPTER"].notna()
+        if mask_adapter.any():
+            df_full.loc[mask_adapter, "TRAZA_CALIDAD"] = df_full.loc[mask_adapter, "TRAZA_ADAPTER"]
 
     return df_full
 

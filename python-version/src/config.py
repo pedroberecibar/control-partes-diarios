@@ -62,6 +62,8 @@ TRAZAS_RECHAZO = [
     "Informados con ORD-SUMI aprobado",
     "Informado - No Ejecutado",
     "Otro Origen",
+    "Fecha Inválida",
+    "Código de Tarea No Mapeado",
 ]
 TRAZAS_DESCARTE_TECNICO = [
     "No Corresponde TOR CE",
@@ -69,6 +71,8 @@ TRAZAS_DESCARTE_TECNICO = [
     "Error Sumi Sin Nro Medidor",
     "Error Sumi Y Nro Medidor",
     "Otro Origen",
+    "Fecha Inválida",
+    "Código de Tarea No Mapeado",
 ]
 TRAZAS_CORRECCION_MEDIDOR = [
     "Corregido Nro EQP Invertidos",

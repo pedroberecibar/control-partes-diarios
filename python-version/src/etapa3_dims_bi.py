@@ -57,6 +57,8 @@ _DATOS_DIM_TRAZA: list[tuple[int, str]] = [
     (11, "Otro Origen"),
     (12, "Corregido Medidor Vacio"),
     (13, "Informado - No Ejecutado"),
+    (14, "Código de Tarea No Mapeado"),
+    (15, "Fecha Inválida"),
 ]
 
 

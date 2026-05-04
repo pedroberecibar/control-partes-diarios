@@ -35,8 +35,7 @@ export function normalizeLote(l) {
     id: `LOT-${String(l.id).padStart(7, '0')}`,
     _id: l.id,
     archivo: l.nombre_archivo,
-    // contratista name not in LoteResponse — show ID until backend enriches schema
-    contratista: `ID:${l.contratista_id}`,
+    contratista: l.contratista_nombre || `ID:${l.contratista_id}`,
     subido_por: `Usuario #${l.subido_por}`,
     fecha: fmtDateTime(l.fecha_subida),
     estado: l.estado,
@@ -52,10 +51,10 @@ export function normalizeLote(l) {
 // ParteResumenResponse → frontend parte shape
 export function normalizeParte(p) {
   return {
-    id: p.id_parte_hash || String(p.id),
+    id: p.id_externo || String(p.id),
     _id: p.id,
     contratista: p.contratista || '—',
-    operario: p.operario_nombre || '—',  // not in list endpoint; present in detail
+    operario: p.operario_nombre || '—',
     fecha: fmtDate(p.fecha_ejecucion),
     suministro: p.suministro || '—',
     cod_epec: p.cod_epec != null ? String(p.cod_epec) : '—',
@@ -64,13 +63,13 @@ export function normalizeParte(p) {
     id_traza: p.id_traza,
     estado: p.estado || '—',
     id_estado: p.id_estado,
-    uses: '—',         // not in ParteResumenResponse
-    medidor_dec: '—',  // not in ParteResumenResponse
+    uses: p.valor_uses != null ? String(p.valor_uses) : '—',
+    medidor_dec: '—',
     version: 1,
     cant_imagenes: p.cant_imagenes ?? 0,
     fue_corregido: p.fue_corregido,
     anulado: p.anulado,
-    lote: '',          // lote_id not in ParteResumenResponse
+    lote: '',
   };
 }
 

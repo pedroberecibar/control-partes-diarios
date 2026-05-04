@@ -152,19 +152,25 @@ def _ejecutar_motor_analitico(
     if df_contratista is None or df_contratista.empty:
         return df_contratista, None
 
-    df_final, df_img, _metricas4 = procesar_etapa4(df_fact_input=df_contratista)
+    df_aprobados, df_img, _metricas4 = procesar_etapa4(df_fact_input=df_contratista)
 
-    # Si etapa4 no produjo aprobados (todos "Sin Orden Asociada" u otro estado
-    # no-aprobado), usar el output normalizado del core directamente.
-    # Los campos de obs/USES quedarán NULL — comportamiento correcto y esperado.
-    if df_final is None or df_final.empty:
+    if df_aprobados is None or df_aprobados.empty:
         log.info(
             "WORKER motor — etapa4 sin aprobados; importando %d partes desde core (ID_ESTADO≠1).",
             len(df_contratista),
         )
         return df_contratista, None
 
-    return df_final, df_img
+    # Recombinar aprobados enriquecidos por etapa4 con los no-aprobados del core.
+    # Sin esto, los ~15k rechazados/huérfanos se descartan silenciosamente.
+    mask_aprobados = df_contratista["ID_PARTE_HASH"].isin(df_aprobados["ID_PARTE_HASH"])
+    df_no_aprobados = df_contratista.loc[~mask_aprobados].copy()
+    df_completo = pd.concat([df_aprobados, df_no_aprobados], ignore_index=True, sort=False)
+    log.info(
+        "WORKER motor — etapa4: aprobados=%d, no-aprobados=%d, total=%d",
+        len(df_aprobados), len(df_no_aprobados), len(df_completo),
+    )
+    return df_completo, df_img
 
 
 # ----------------------------------------------------------------------

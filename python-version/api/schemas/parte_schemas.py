@@ -54,7 +54,11 @@ class ParteResumenResponse(BaseModel):
     id_traza: int
     traza_calidad: Optional[str] = None
 
+    contratista_id: int
     contratista: Optional[str] = None
+    operario_nombre: Optional[str] = None
+    id_externo: Optional[str] = None
+    valor_uses: Optional[float] = None
     cant_imagenes: int = 0
     fue_corregido: bool
     anulado: bool

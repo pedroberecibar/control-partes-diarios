@@ -67,7 +67,7 @@ MAPA_RENOMBRES: dict[str, str] = {
 COLS_FINAL = [
     "ID_Externo", "Fecha", "Suministro",
     "medidorColocado", "medidorRetirado", "codTiposManoObra",
-    "ORIGEN_ARCHIVO",
+    "ORIGEN_ARCHIVO", "TRAZA_ADAPTER",
 ]
 
 COLS_TEXTO = [
@@ -133,11 +133,17 @@ def procesar_excel(path: Path, codigos_validos: list[str]) -> tuple[pd.DataFrame
         if c not in df.columns:
             df[c] = None
 
-    # Descartar filas de totales/encabezados residuales por fecha no parseable
+    # Inicializar TRAZA_ADAPTER (None = fila válida desde el adapter)
+    df["TRAZA_ADAPTER"] = None
+
+    # Descartar encabezados residuales reales (no son partes).
+    # Filas con fecha inválida se conservan marcadas con TRAZA_ADAPTER.
     if "Fecha" in df.columns:
-        df = df.loc[~df["Fecha"].astype(str).str.contains("Total|Fecha", case=False, na=False)]
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
-        df = df.loc[df["Fecha"].notna()]
+        df = df.loc[~df["Fecha"].astype(str).str.contains("Total|Fecha", case=False, na=False)].copy()
+        fechas_parsed = pd.to_datetime(df["Fecha"], errors="coerce")
+        mask_fecha_invalida = fechas_parsed.isna()
+        df["Fecha"] = fechas_parsed.dt.date
+        df.loc[mask_fecha_invalida, "TRAZA_ADAPTER"] = "Fecha Inválida"
 
     # Normalización de texto
     for c in COLS_TEXTO:
@@ -161,26 +167,42 @@ def procesar_excel(path: Path, codigos_validos: list[str]) -> tuple[pd.DataFrame
             extracted.notna(), raw
         )
 
-    # Filtro por códigos habilitados
+    # Filtro por códigos habilitados — marca inválidos con TRAZA_ADAPTER, no los descarta.
+    # Los valores del master (COD_CONTRATISTA_INDIVIDUAL) pueden tener el mismo
+    # prefijo "COD " que el Excel, por lo que se normalizan aquí con la misma
+    # lógica antes de comparar (ambos lados quedan como strings 2-dígito zero-filled).
     if "codTiposManoObra" in df.columns and codigos_validos:
+        cv = pd.Series(codigos_validos, dtype=str).str.strip()
+        cv_ext = cv.str.extract(r"(\d{1,2})", expand=False)
+        codigos_validos_norm = set(
+            cv_ext.where(cv_ext.isna(), cv_ext.str.zfill(2))
+            .where(cv_ext.notna(), cv)
+            .dropna()
+            .unique()
+        )
         codigos_en_archivo = df["codTiposManoObra"].dropna().unique().tolist()
-        log.info("CONECTAR adapter — codigos normalizados en archivo: %s | codigos validos: %s",
-                 codigos_en_archivo[:20], codigos_validos)
-        df_ce = df.loc[df["codTiposManoObra"].isin(codigos_validos)].copy()
-        stats["aprobados_ce"] = len(df_ce)
+        log.info(
+            "CONECTAR adapter — codigos norm (archivo): %s | codigos norm (master): %s",
+            codigos_en_archivo[:20], sorted(codigos_validos_norm),
+        )
+        mask_valido = df["codTiposManoObra"].isin(codigos_validos_norm)
+        stats["aprobados_ce"] = int(mask_valido.sum())
+        # Solo marcar con traza de código si la fila no tiene ya "Fecha Inválida"
+        mask_cod_invalido = ~mask_valido & df["TRAZA_ADAPTER"].isna()
+        df.loc[mask_cod_invalido, "TRAZA_ADAPTER"] = "Código de Tarea No Mapeado"
     else:
         log.warning("CONECTAR adapter — sin codTiposManoObra o codigos_validos vacío (total=%d).",
                     stats["total_leido"])
-        df_ce = pd.DataFrame()
 
-    if df_ce.empty:
-        log.warning("CONECTAR adapter — df_ce vacío tras filtro (total_leido=%d, codigos=%s).",
-                    stats["total_leido"], codigos_validos)
-        return None, stats
-
-    df_ce["ORIGEN_ARCHIVO"] = path.name
-    df_ce["fecha_proceso"]  = datetime.now()
-    return df_ce, stats
+    df["ORIGEN_ARCHIVO"] = path.name
+    df["fecha_proceso"]  = datetime.now()
+    log.info(
+        "CONECTAR adapter — %s: total=%d, aprobados=%d, fecha_invalida=%d, cod_invalido=%d",
+        path.name, stats["total_leido"], stats["aprobados_ce"],
+        int((df["TRAZA_ADAPTER"] == "Fecha Inválida").sum()),
+        int((df["TRAZA_ADAPTER"] == "Código de Tarea No Mapeado").sum()),
+    )
+    return df, stats
 
 
 def run(modo_reproceso: bool = False) -> dict:
@@ -208,17 +230,15 @@ def run(modo_reproceso: bool = False) -> dict:
     total_aprobados = 0
 
     for path in pendientes:
-        df_ce, stats = procesar_excel(path, codigos_validos)
+        df_tmp, stats = procesar_excel(path, codigos_validos)
         total_leido     += stats["total_leido"]
         total_aprobados += stats["aprobados_ce"]
         log.info("  %-50s leídos=%-6d aprobados_ce=%d",
                  path.name[:50], stats["total_leido"], stats["aprobados_ce"])
-        if df_ce is not None:
-            lotes.append(df_ce)
-            nombres_ok.append(path.name)
-        else:
-            # Registramos igual como "ya procesado" para no volver a leerlo
-            nombres_ok.append(path.name)
+        if df_tmp is not None:
+            lotes.append(df_tmp)
+        # Siempre registrar como procesado para no re-leer en próxima corrida
+        nombres_ok.append(path.name)
 
     df_lote = pd.concat(lotes, ignore_index=True, sort=False) if lotes else pd.DataFrame()
     filas_guardadas = len(df_lote)
