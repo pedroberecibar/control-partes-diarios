@@ -264,7 +264,7 @@ export function ImageViewer({ photos, embedded = false, parteId, initialIdx = 0,
       >
         <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(0,0,0,0.4)' }}>
           <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>
-            Parte {parteId} · Foto {idx + 1}/{count}
+            Sumi {parteId} · Foto {idx + 1}/{count}
           </span>
           <div style={{ flex: 1 }} />
           <button
@@ -315,7 +315,7 @@ function ModalDetailPanel({ parte, onGoToDetalle, obsOverride }) {
   return (
     <div style={pS.panel}>
       <div style={pS.header}>
-        <div style={pS.parteId}>{p.id || 'PD-2025-00042'}</div>
+        <div style={pS.parteId}>Sumi {p.suministro || '412881'}</div>
         <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <StatusChip label={p.traza || 'Error Sumi Nro Med'} config={tc} size="xs" />
           <StatusChip label={p.estado || 'En Revisión'} config={PARTE_ESTADO_CONFIG[p.estado] || {}} size="xs" />
@@ -421,15 +421,15 @@ function ModalDetailPanel({ parte, onGoToDetalle, obsOverride }) {
 
 // ── Modal completo (B5 — icono cámara en bandeja) ─────────────────
 export function VisorModal({ parte, onClose, onGoToDetalle }) {
-  const [photos, setPhotos] = useState(() => getPartePhotos(parte?.id));
+  const [photos, setPhotos] = useState(() => getPartePhotos(parte?.suministro));
   const [obsOverride, setObsOverride] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    if (parte?._id) {
-      getVisor(parte._id)
+    if (typeof parte?.id === 'number') {
+      getVisor(parte.id)
         .then((data) => {
           if (cancelled) return;
           setPhotos((data.imagenes || []).map((img) => img.url));
@@ -438,27 +438,27 @@ export function VisorModal({ parte, onClose, onGoToDetalle }) {
         })
         .catch(() => {
           if (cancelled) return;
-          setPhotos(getPartePhotos(parte?.id));
+          setPhotos(getPartePhotos(parte?.suministro));
           setObsOverride(null);
           setLoading(false);
         });
     } else {
       const t = setTimeout(() => {
         if (!cancelled) {
-          setPhotos(getPartePhotos(parte?.id));
+          setPhotos(getPartePhotos(parte?.suministro));
           setLoading(false);
         }
       }, 300);
       return () => { cancelled = true; clearTimeout(t); };
     }
     return () => { cancelled = true; };
-  }, [parte?._id, parte?.id]);
+  }, [parte?.id]);
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Visor de imágenes — ${parte?.id}`}
+      aria-label={`Visor de imágenes — Sumi ${parte?.suministro}`}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
@@ -477,8 +477,8 @@ export function VisorModal({ parte, onClose, onGoToDetalle }) {
       >
         <div style={{ padding: '10px 14px', background: '#111614', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <Icon name="camera" size={15} color="#6dbf97" />
-          <span style={{ color: 'white', fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{parte?.id}</span>
-          <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginLeft: 2 }}>— Suministro {parte?.suministro}</span>
+          <span style={{ color: 'white', fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>Sumi {parte?.suministro}</span>
+          <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginLeft: 2 }}>· {parte?.fecha}</span>
           <div style={{ flex: 1 }} />
           <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
             {photos.length} foto{photos.length !== 1 ? 's' : ''}
@@ -499,7 +499,7 @@ export function VisorModal({ parte, onClose, onGoToDetalle }) {
               <div className="skeleton" style={{ width: '60%', height: '80%', borderRadius: 4, background: 'rgba(255,255,255,0.05)' }} />
             </div>
           ) : (
-            <ImageViewer photos={photos} parteId={parte?.id} onClose={onClose} />
+            <ImageViewer photos={photos} parteId={parte?.suministro} onClose={onClose} />
           )}
           <ModalDetailPanel parte={parte} onGoToDetalle={onGoToDetalle} obsOverride={obsOverride} />
         </div>
@@ -521,27 +521,27 @@ export function VisorModal({ parte, onClose, onGoToDetalle }) {
 
 // ── Visor embebido para B6 (Detalle) ──────────────────────────────
 export function EmbeddedVisor({ parte }) {
-  const [photos, setPhotos] = useState(() => getPartePhotos(parte?.id));
+  const [photos, setPhotos] = useState(() => getPartePhotos(parte?.suministro));
 
   useEffect(() => {
     let cancelled = false;
-    if (parte?._id) {
-      getVisor(parte._id)
+    if (typeof parte?.id === 'number') {
+      getVisor(parte.id)
         .then((data) => {
           if (!cancelled) setPhotos((data.imagenes || []).map((img) => img.url));
         })
         .catch(() => {
-          if (!cancelled) setPhotos(getPartePhotos(parte?.id));
+          if (!cancelled) setPhotos(getPartePhotos(parte?.suministro));
         });
     } else {
-      setPhotos(getPartePhotos(parte?.id));
+      setPhotos(getPartePhotos(parte?.suministro));
     }
     return () => { cancelled = true; };
-  }, [parte?._id, parte?.id]);
+  }, [parte?.id]);
 
   return (
     <div style={{ background: '#1a1f1d', borderRadius: 6, overflow: 'hidden', height: 440, display: 'flex' }}>
-      <ImageViewer photos={photos} parteId={parte?.id} embedded onClose={() => {}} />
+      <ImageViewer photos={photos} parteId={parte?.suministro} embedded onClose={() => {}} />
     </div>
   );
 }

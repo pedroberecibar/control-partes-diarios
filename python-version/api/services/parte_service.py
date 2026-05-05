@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
+from sqlalchemy import cast, or_, String
 from sqlalchemy.orm import Session
 
 from api.db.models.base_models import Contratista
@@ -56,6 +57,17 @@ class ParteService:
     # Listado (B5 — Bandeja de Auditoría)
     # ------------------------------------------------------------------
 
+    _SORT_COLS = {
+        "id":         ParteDiarioProcesado.id,
+        "fecha":      ParteDiarioProcesado.fecha_ejecucion,
+        "suministro": ParteDiarioProcesado.suministro,
+        "ord_nro":    ParteDiarioProcesado.ord_nro,
+        "traza":      ParteDiarioProcesado.id_traza,
+        "id_traza":   ParteDiarioProcesado.id_traza,
+        "estado":     ParteDiarioProcesado.id_estado,
+        "uses":       ParteDiarioProcesado.valor_uses_origen,
+    }
+
     def listar_partes(
         self,
         skip: int = 0,
@@ -63,10 +75,17 @@ class ParteService:
         id_estado: int | None = None,
         suministro: str | None = None,
         ord_nro: int | None = None,
+        id_trazas: list[int] | None = None,
+        id_estados: list[int] | None = None,
+        contratista_ids: list[int] | None = None,
+        search: str | None = None,
+        sort_by: str = "id",
+        sort_dir: str = "desc",
     ) -> ParteListResponse:
         """Lista partes procesados con filtros opcionales y paginación."""
         query = self.db.query(ParteDiarioProcesado)
 
+        # Legacy single-value filters
         if id_estado is not None:
             query = query.filter(ParteDiarioProcesado.id_estado == id_estado)
         if suministro:
@@ -74,9 +93,28 @@ class ParteService:
         if ord_nro is not None:
             query = query.filter(ParteDiarioProcesado.ord_nro == ord_nro)
 
+        # Multi-value filters
+        if id_trazas:
+            query = query.filter(ParteDiarioProcesado.id_traza.in_(id_trazas))
+        if id_estados:
+            query = query.filter(ParteDiarioProcesado.id_estado.in_(id_estados))
+        if contratista_ids:
+            query = query.filter(ParteDiarioProcesado.contratista_id.in_(contratista_ids))
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(
+                ParteDiarioProcesado.suministro.ilike(term),
+                cast(ParteDiarioProcesado.ord_nro, String).ilike(term),
+                cast(ParteDiarioProcesado.id, String).ilike(term),
+            ))
+
+        # Sorting
+        sort_col = self._SORT_COLS.get(sort_by, ParteDiarioProcesado.id)
+        order_expr = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
+
         total = query.count()
         items = (
-            query.order_by(ParteDiarioProcesado.id.desc())
+            query.order_by(order_expr)
             .offset(skip)
             .limit(limit)
             .all()

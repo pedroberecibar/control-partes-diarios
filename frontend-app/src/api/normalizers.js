@@ -51,8 +51,8 @@ export function normalizeLote(l) {
 // ParteResumenResponse → frontend parte shape
 export function normalizeParte(p) {
   return {
-    id: p.id_externo || String(p.id),
-    _id: p.id,
+    id: p.id,
+    id_externo: p.id_externo || null,
     contratista: p.contratista || '—',
     operario: p.operario_nombre || '—',
     fecha: fmtDate(p.fecha_ejecucion),

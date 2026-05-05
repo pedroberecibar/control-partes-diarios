@@ -23,15 +23,27 @@ router = APIRouter()
 def listar_partes(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=5000),
-    id_estado: int | None = Query(None, description="Filtrar por estado (1:Aprobado, 2:Revisión, 3:Rechazado, 4:FueraAlcance)"),
-    suministro: str | None = Query(None, description="Filtrar por suministro exacto"),
-    ord_nro: int | None = Query(None, description="Filtrar por nro de ordenativo"),
+    id_estado: int | None = Query(None),
+    suministro: str | None = Query(None),
+    ord_nro: int | None = Query(None),
+    id_trazas: list[int] = Query(default=[]),
+    id_estados: list[int] = Query(default=[]),
+    contratista_ids: list[int] = Query(default=[]),
+    search: str | None = Query(None),
+    sort_by: str = Query("id"),
+    sort_dir: str = Query("desc"),
     db: Session = Depends(get_db),
 ):
     """Lista los partes diarios procesados con filtros opcionales y paginación."""
     return ParteService(db).listar_partes(
-        skip=skip, limit=limit, id_estado=id_estado,
-        suministro=suministro, ord_nro=ord_nro,
+        skip=skip, limit=limit,
+        id_estado=id_estado, suministro=suministro, ord_nro=ord_nro,
+        id_trazas=id_trazas or None,
+        id_estados=id_estados or None,
+        contratista_ids=contratista_ids or None,
+        search=search,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
     )
 
 

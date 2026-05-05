@@ -1,9 +1,15 @@
 import { apiFetch } from './client';
 
 export function getPartes(params = {}) {
-  const qs = new URLSearchParams(
-    Object.entries(params).filter(([, v]) => v != null && v !== '')
-  );
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+    if (Array.isArray(v)) {
+      v.forEach((item) => qs.append(k, item));
+    } else {
+      qs.append(k, v);
+    }
+  }
   return apiFetch(`/api/v1/partes/?${qs}`);
 }
 

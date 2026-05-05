@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon, PARTE_ESTADO_CONFIG, StatusChip, TRAZA_CONFIG } from '../components/Icon';
 import { VisorModal } from '../components/visor/Visor';
 import { getPartes } from '../api/partesApi';
@@ -8,7 +8,6 @@ const PER_PAGE = 25;
 const TRAZAS_DANGER = ['Sin Orden Asociada', 'Repetido X Sumi', 'Error Sumi Nro Med'];
 
 const COLS = [
-  { id: 'id',          label: 'ID Parte',       w: 120 },
   { id: 'contratista', label: 'Contratista',     w: 96  },
   { id: 'operario',    label: 'Operario',        w: 130 },
   { id: 'fecha',       label: 'Fecha',           w: 80  },
@@ -21,109 +20,105 @@ const COLS = [
   { id: 'fotos',       label: 'Fotos',           w: 52  },
 ];
 
+// Backend sort key mapping (frontend col id → backend sort_by param)
+const SORT_COL_BACKEND = {
+  id:          'id',
+  fecha:       'fecha',
+  suministro:  'suministro',
+  ord_nro:     'ord_nro',
+  traza:       'traza',
+  estado:      'estado',
+  uses:        'uses',
+};
+
+// Static sidebar options — IDs match dim_traza_calidad_bi and dim_estado_bi
+const TRAZAS_OPCIONES = [
+  { id: 1,  label: 'Original OK' },
+  { id: 2,  label: 'Corregido Nro EQP Invertidos' },
+  { id: 3,  label: 'Corregido Nro Medidor' },
+  { id: 4,  label: 'Corregido Sumi' },
+  { id: 5,  label: 'Corregido Sumi Nro EQP' },
+  { id: 6,  label: 'No Corresponde TOR CE' },
+  { id: 7,  label: 'Sin Orden Asociada' },
+  { id: 8,  label: 'Error Sumi Sin Nro Medidor' },
+  { id: 9,  label: 'Error Sumi Y Nro Medidor' },
+  { id: 10, label: 'Informados con ORD-SUMI aprobado' },
+  { id: 11, label: 'Otro Origen' },
+  { id: 12, label: 'Corregido Medidor Vacio' },
+  { id: 13, label: 'Informado - No Ejecutado' },
+  { id: 14, label: 'Código de Tarea No Mapeado' },
+  { id: 15, label: 'Fecha Inválida' },
+];
+
+const ESTADOS_OPCIONES = [
+  { id: 1, label: 'Aprobado' },
+  { id: 2, label: 'Revisión' },
+  { id: 3, label: 'Rechazado' },
+  { id: 4, label: 'Fuera de Alcance' },
+];
+
+const CONTRATISTAS_OPCIONES = [
+  { id: 1, label: 'CONECTAR' },
+  { id: 2, label: 'COOPLYF' },
+];
+
+const STORAGE_KEY = 'bandeja_estado';
+const DEFAULTS = { filters: { id_trazas: [], id_estados: [], contratista_ids: [], search: '' }, page: 1, sortCol: 'id', sortDir: 'desc' };
+
+function readStorage() {
+  try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
+}
+
 export function BandejaAuditoria({ onOpenDetalle }) {
   const [partes, setPartes]           = useState([]);
+  const [total, setTotal]             = useState(0);
   const [loading, setLoading]         = useState(true);
   const [usingMock, setUsingMock]     = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [filters, setFilters]         = useState({ traza: [], estado: [], contratista: [], lote: '', search: '' });
+  const [filters, setFilters]         = useState(() => readStorage().filters ?? DEFAULTS.filters);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sortCol, setSortCol]         = useState('id');
-  const [sortDir, setSortDir]         = useState('asc');
-  const [page, setPage]               = useState(1);
+  const [sortCol, setSortCol]         = useState(() => readStorage().sortCol ?? DEFAULTS.sortCol);
+  const [sortDir, setSortDir]         = useState(() => readStorage().sortDir ?? DEFAULTS.sortDir);
+  const [page, setPage]               = useState(() => readStorage().page ?? DEFAULTS.page);
   const [visorParte, setVisorParte]   = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
-    const PAGE_SIZE = 1000;
-    async function fetchAll() {
-      const allItems = [];
-      let skip = 0;
-      while (true) {
-        const res = await getPartes({ skip, limit: PAGE_SIZE });
-        allItems.push(...res.items);
-        if (allItems.length >= res.total || res.items.length < PAGE_SIZE) break;
-        skip += PAGE_SIZE;
-      }
-      return allItems;
-    }
-
-    fetchAll()
-      .then((items) => {
+    getPartes({
+      skip: (page - 1) * PER_PAGE,
+      limit: PER_PAGE,
+      id_trazas: filters.id_trazas,
+      id_estados: filters.id_estados,
+      contratista_ids: filters.contratista_ids,
+      search: filters.search || undefined,
+      sort_by: SORT_COL_BACKEND[sortCol] || 'id',
+      sort_dir: sortDir,
+    })
+      .then((res) => {
         if (!cancelled) {
-          setPartes(items.map(normalizeParte));
+          setPartes(res.items.map(normalizeParte));
+          setTotal(res.total);
           setUsingMock(false);
-          setFilters({ traza: [], estado: [], contratista: [], lote: '', search: '' });
-          setPage(1);
         }
       })
-      .catch(() => {
-        if (!cancelled) setUsingMock(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .catch(() => { if (!cancelled) setUsingMock(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
     return () => { cancelled = true; };
-  }, []);
+  }, [page, sortCol, sortDir, filters]);
 
-  // Derive filter options from loaded data
-  const availableTrazas = useMemo(() => {
-    const s = new Set(partes.map((p) => p.traza).filter((t) => t && t !== '—'));
-    return [...s].sort();
-  }, [partes]);
+  useEffect(() => {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ filters, page, sortCol, sortDir }));
+  }, [filters, page, sortCol, sortDir]);
 
-  const availableEstados = useMemo(() => {
-    const s = new Set(partes.map((p) => p.estado).filter((e) => e && e !== '—'));
-    return [...s].sort();
-  }, [partes]);
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
-  const availableContratistas = useMemo(() => {
-    const s = new Set(partes.map((p) => p.contratista).filter((c) => c && c !== '—'));
-    return [...s].sort();
-  }, [partes]);
-
-  const filtered = useMemo(() => {
-    let rows = partes;
-    if (filters.traza.length)       rows = rows.filter((r) => filters.traza.includes(r.traza));
-    if (filters.estado.length)      rows = rows.filter((r) => filters.estado.includes(r.estado));
-    if (filters.contratista.length) rows = rows.filter((r) => filters.contratista.includes(r.contratista));
-    if (filters.lote)               rows = rows.filter((r) => r.lote === filters.lote);
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      rows = rows.filter(
-        (r) =>
-          r.id.toLowerCase().includes(q) ||
-          r.operario.toLowerCase().includes(q) ||
-          r.suministro.includes(filters.search) ||
-          String(r.ord_nro).toLowerCase().includes(q)
-      );
-    }
-    return rows;
-  }, [filters, partes]);
-
-  const sorted = useMemo(() => {
-    return [...filtered].sort((a, b) => {
-      const av = a[sortCol] ?? ''; const bv = b[sortCol] ?? '';
-      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }, [filtered, sortCol, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
-  const pageRows = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-
-  const trazaCounts = useMemo(() => {
-    const c = {};
-    partes.forEach((r) => { c[r.traza] = (c[r.traza] || 0) + 1; });
-    return c;
-  }, [partes]);
-
-  function toggleFilter(key, val) {
+  function toggleFilter(key, id) {
     setFilters((f) => {
       const arr = f[key];
-      return { ...f, [key]: arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val] };
+      return { ...f, [key]: arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id] };
     });
     setPage(1);
   }
@@ -135,16 +130,16 @@ export function BandejaAuditoria({ onOpenDetalle }) {
     });
   }
   function toggleAll() {
-    if (pageRows.every((r) => selectedIds.has(r.id))) {
+    if (partes.every((r) => selectedIds.has(r.id))) {
       setSelectedIds((s) => {
         const n = new Set(s);
-        pageRows.forEach((r) => n.delete(r.id));
+        partes.forEach((r) => n.delete(r.id));
         return n;
       });
     } else {
       setSelectedIds((s) => {
         const n = new Set(s);
-        pageRows.forEach((r) => n.add(r.id));
+        partes.forEach((r) => n.add(r.id));
         return n;
       });
     }
@@ -154,8 +149,11 @@ export function BandejaAuditoria({ onOpenDetalle }) {
     else { setSortCol(col); setSortDir('asc'); }
   }
 
-  const allSelected = pageRows.length > 0 && pageRows.every((r) => selectedIds.has(r.id));
+  const allSelected = partes.length > 0 && partes.every((r) => selectedIds.has(r.id));
   const someSelected = selectedIds.size > 0;
+
+  const activeFilterCount =
+    filters.id_trazas.length + filters.id_estados.length + filters.contratista_ids.length;
 
   const bS = {
     root: { display: 'flex', height: '100%', overflow: 'hidden', background: '#f5f7f6' },
@@ -199,9 +197,6 @@ export function BandejaAuditoria({ onOpenDetalle }) {
     mockBanner: { padding: '5px 14px', background: '#fff3cd', borderBottom: '1px solid #f5d56a', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#7a4a00', fontWeight: 600, flexShrink: 0 },
   };
 
-  const activeFilterCount =
-    filters.traza.length + filters.estado.length + filters.contratista.length + (filters.lote ? 1 : 0);
-
   return (
     <div style={bS.root}>
       <div style={bS.filterSidebar}>
@@ -210,7 +205,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
           {activeFilterCount > 0 && (
             <button
               style={bS.clearBtn}
-              onClick={() => setFilters({ traza: [], estado: [], contratista: [], lote: '', search: '' })}
+              onClick={() => { setFilters({ id_trazas: [], id_estados: [], contratista_ids: [], search: '' }); setPage(1); }}
             >
               Limpiar
             </button>
@@ -219,17 +214,16 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Traza Calidad</div>
-          {availableTrazas.map((t) => {
-            const active = filters.traza.includes(t);
+          {TRAZAS_OPCIONES.map((t) => {
+            const active = filters.id_trazas.includes(t.id);
             return (
               <div
-                key={t}
+                key={t.id}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer' }}
-                onClick={() => toggleFilter('traza', t)}
+                onClick={() => toggleFilter('id_trazas', t.id)}
               >
                 <input type="checkbox" checked={active} readOnly style={bS.checkbox} />
-                <span style={{ fontSize: 11.5, color: active ? '#124e2f' : '#4a5550', fontWeight: active ? 600 : 400 }}>{t}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 10, color: '#8f9c97' }}>{trazaCounts[t] || 0}</span>
+                <span style={{ fontSize: 11.5, color: active ? '#124e2f' : '#4a5550', fontWeight: active ? 600 : 400 }}>{t.label}</span>
               </div>
             );
           })}
@@ -237,16 +231,16 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Estado</div>
-          {availableEstados.map((e) => {
-            const active = filters.estado.includes(e);
+          {ESTADOS_OPCIONES.map((e) => {
+            const active = filters.id_estados.includes(e.id);
             return (
               <div
-                key={e}
+                key={e.id}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer' }}
-                onClick={() => toggleFilter('estado', e)}
+                onClick={() => toggleFilter('id_estados', e.id)}
               >
                 <input type="checkbox" checked={active} readOnly style={bS.checkbox} />
-                <span style={{ fontSize: 11.5, color: active ? '#124e2f' : '#4a5550', fontWeight: active ? 600 : 400 }}>{e}</span>
+                <span style={{ fontSize: 11.5, color: active ? '#124e2f' : '#4a5550', fontWeight: active ? 600 : 400 }}>{e.label}</span>
               </div>
             );
           })}
@@ -254,16 +248,16 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Contratista</div>
-          {availableContratistas.map((c) => {
-            const active = filters.contratista.includes(c);
+          {CONTRATISTAS_OPCIONES.map((c) => {
+            const active = filters.contratista_ids.includes(c.id);
             return (
               <div
-                key={c}
+                key={c.id}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer' }}
-                onClick={() => toggleFilter('contratista', c)}
+                onClick={() => toggleFilter('contratista_ids', c.id)}
               >
                 <input type="checkbox" checked={active} readOnly style={bS.checkbox} />
-                <span style={{ fontSize: 11.5, color: active ? '#124e2f' : '#4a5550', fontWeight: active ? 600 : 400 }}>{c}</span>
+                <span style={{ fontSize: 11.5, color: active ? '#124e2f' : '#4a5550', fontWeight: active ? 600 : 400 }}>{c.label}</span>
               </div>
             );
           })}
@@ -291,12 +285,12 @@ export function BandejaAuditoria({ onOpenDetalle }) {
             <Icon name="search" size={13} color="#8f9c97" />
             <input
               style={bS.searchInput}
-              placeholder="ID, operario, suministro, orden…"
+              placeholder="ID, suministro, orden…"
               value={filters.search}
               onChange={(e) => { setFilters((f) => ({ ...f, search: e.target.value })); setPage(1); }}
             />
           </div>
-          <span style={bS.count}>{sorted.length} partes</span>
+          <span style={bS.count}>{total} partes</span>
           <div style={{ flex: 1 }} />
           <button style={bS.btn}><Icon name="download" size={13} /> Exportar</button>
           <button style={bS.btn}><Icon name="columns" size={13} /> Columnas</button>
@@ -318,19 +312,19 @@ export function BandejaAuditoria({ onOpenDetalle }) {
               Cargando partes…
             </div>
           )}
-          {!loading && sorted.length === 0 && (
+          {!loading && partes.length === 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: 8 }}>
               <Icon name={usingMock ? 'alert-circle' : 'inbox'} size={28} color="#d5ddd9" />
               <span style={{ fontSize: 13, color: '#8f9c97' }}>
                 {usingMock
                   ? 'No se pudo conectar al backend.'
-                  : activeFilterCount > 0
+                  : activeFilterCount > 0 || filters.search
                     ? 'No hay partes que coincidan con los filtros activos.'
                     : 'No hay partes procesados aún. Cargá un lote para comenzar.'}
               </span>
             </div>
           )}
-          {!loading && sorted.length > 0 && <table style={bS.table}>
+          {!loading && partes.length > 0 && <table style={bS.table}>
             <thead>
               <tr>
                 <th style={{ ...bS.th, width: 36, padding: 8 }}>
@@ -350,7 +344,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((row, i) => {
+              {partes.map((row, i) => {
                 const selected = selectedIds.has(row.id);
                 const tc = TRAZA_CONFIG[row.traza] || {};
                 const ec = PARTE_ESTADO_CONFIG[row.estado] || {};
@@ -368,7 +362,6 @@ export function BandejaAuditoria({ onOpenDetalle }) {
                     <td style={{ ...bS.td, width: 36, padding: '7px 8px' }} onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected} onChange={() => toggleRow(row.id)} style={bS.checkbox} />
                     </td>
-                    <td style={{ ...bS.td, ...bS.mono, color: '#124e2f', fontWeight: 600 }}>{row.id}</td>
                     <td style={bS.td}>
                       <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 3, background: row.contratista === 'CONECTAR' ? '#edf5f0' : '#dbeafe', color: row.contratista === 'CONECTAR' ? '#124e2f' : '#0d4272' }}>
                         {row.contratista}
@@ -438,7 +431,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
         <div style={bS.pagination}>
           <span style={{ fontSize: 12, color: '#6b7772' }}>
-            {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, sorted.length)} de {sorted.length} partes
+            {total === 0 ? '0 partes' : `${(page - 1) * PER_PAGE + 1}–${Math.min(page * PER_PAGE, total)} de ${total} partes`}
           </span>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <button style={bS.pageBtn} onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>

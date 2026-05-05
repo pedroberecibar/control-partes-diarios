@@ -15,6 +15,7 @@ una función pura (input DataFrame → output DataFrame).
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +29,10 @@ from src.etapa3_core import ejecutar_core_para_contratista
 from src.etapa4_control_obs import procesar_etapa4
 
 log = logging.getLogger("api.services.worker")
+
+# El motor escribe Parquets globales (control_obs_app.parquet.tmp, etc.).
+# Este lock garantiza que solo un lote corra el motor a la vez.
+_motor_lock = threading.Lock()
 
 
 def procesar_lote_en_background(lote_id: int) -> None:
@@ -75,7 +80,11 @@ def procesar_lote_en_background(lote_id: int) -> None:
             if df_aux is None or df_aux.empty:
                 raise ValueError("El archivo resultó vacío después de la limpieza.")
 
-            df_final, df_img = _ejecutar_motor_analitico(contratista.nombre, df_aux)
+            log.info("Lote %d esperando turno en el motor analítico.", lote_id)
+            with _motor_lock:
+                log.info("Lote %d ingresó al motor analítico.", lote_id)
+                df_final, df_img = _ejecutar_motor_analitico(contratista.nombre, df_aux)
+
             if df_final is None or df_final.empty:
                 raise ValueError("El motor analítico no pudo procesar el lote (output vacío tras core y etapa4).")
 

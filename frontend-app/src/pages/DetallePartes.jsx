@@ -100,10 +100,10 @@ export function DetallePartes({ parte, onBack }) {
   // Load bitácora when switching to that tab (only if real parte)
   useEffect(() => {
     if (tab !== 'bitacora') return;
-    if (!p._id) { setBitacora(BITACORA_MOCK); return; }
+    if (typeof p.id !== 'number') { setBitacora(BITACORA_MOCK); return; }
     setBitacoraLoading(true);
     setBitacoraError(null);
-    getAuditoria({ parte_id: p._id, limit: 100 })
+    getAuditoria({ parte_id: p.id, limit: 100 })
       .then((res) => {
         if (res.items.length === 0) {
           setBitacora([]);
@@ -122,10 +122,10 @@ export function DetallePartes({ parte, onBack }) {
         setBitacora(BITACORA_MOCK);
       })
       .finally(() => setBitacoraLoading(false));
-  }, [tab, p._id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, p.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function callEditarParte(payload) {
-    if (!p._id) {
+    if (typeof p.id !== 'number') {
       // Mock flow for demo data
       setSaving(true);
       setTimeout(() => { setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000); }, 900);
@@ -134,7 +134,7 @@ export function DetallePartes({ parte, onBack }) {
     setSaving(true);
     setSaveError(null);
     try {
-      await editarParte(p._id, payload);
+      await editarParte(p.id, payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
@@ -168,14 +168,14 @@ export function DetallePartes({ parte, onBack }) {
 
   async function handleAprobar() {
     const motivo = 'Aprobado por auditor';
-    if (!p._id) {
+    if (typeof p.id !== 'number') {
       setApproving(true);
       setTimeout(() => setApproving(false), 800);
       return;
     }
     setApproving(true);
     try {
-      await editarParte(p._id, { id_estado: 1, motivo, usuario_id: USUARIO_ID_DEFAULT, version: p.version ?? 1 });
+      await editarParte(p.id, { id_estado: 1, motivo, usuario_id: USUARIO_ID_DEFAULT, version: p.version ?? 1 });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -193,12 +193,12 @@ export function DetallePartes({ parte, onBack }) {
     if (!rejectMotivo.trim() || rejectMotivo.trim().length < 5) return;
     setRejecting(true);
     setShowRejectModal(false);
-    if (!p._id) {
+    if (typeof p.id !== 'number') {
       setTimeout(() => setRejecting(false), 800);
       return;
     }
     try {
-      await editarParte(p._id, { id_estado: 3, motivo: rejectMotivo.trim(), usuario_id: USUARIO_ID_DEFAULT, version: p.version ?? 1 });
+      await editarParte(p.id, { id_estado: 3, motivo: rejectMotivo.trim(), usuario_id: USUARIO_ID_DEFAULT, version: p.version ?? 1 });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -276,7 +276,7 @@ export function DetallePartes({ parte, onBack }) {
     modalFooter: { padding: '12px 18px', borderTop: '1px solid #eaeeec', display: 'flex', gap: 8, justifyContent: 'flex-end' },
   };
 
-  const photoCount = (p.cant_imagenes != null && p._id) ? p.cant_imagenes : getPartePhotos(p.id).length;
+  const photoCount = (p.cant_imagenes != null && typeof p.id === 'number') ? p.cant_imagenes : getPartePhotos(p.id).length;
 
   return (
     <div style={dS.root}>
@@ -286,7 +286,7 @@ export function DetallePartes({ parte, onBack }) {
         </button>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={dS.parteId}>{p.id}</span>
+            <span style={dS.parteId}>Sumi {p.suministro}</span>
             <StatusChip label={p.traza} config={tc} />
             <StatusChip label={p.estado} config={ec} />
           </div>
@@ -480,9 +480,9 @@ export function DetallePartes({ parte, onBack }) {
             <div style={{ background: 'white', border: '1px solid #eaeeec', borderRadius: 6, overflow: 'hidden' }}>
               <div style={{ padding: '12px 16px', borderBottom: '1px solid #eaeeec', background: '#fafcfb', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Icon name="clock" size={14} color="#6b7772" />
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#2f3733' }}>Bitácora de Auditoría — {p.id}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#2f3733' }}>Bitácora de Auditoría — Sumi {p.suministro}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#8f9c97' }}>
-                  {p._id ? 'Registro real (API)' : 'Datos de demostración'}
+                  {typeof p.id === 'number' ? 'Registro real (API)' : 'Datos de demostración'}
                 </span>
                 <Icon name="lock" size={12} color="#b5bfbb" />
               </div>
@@ -534,7 +534,7 @@ export function DetallePartes({ parte, onBack }) {
       <div style={dS.actionFooter}>
         <span style={{ fontSize: 11.5, color: '#8f9c97', flex: 1 }}>
           {p.estado === 'Aprobado' ? 'Parte ya aprobado' : 'Aprobar o rechazar este parte'}
-          {!p._id && <span style={{ marginLeft: 8, color: '#b5bfbb', fontSize: 10.5 }}>(demo — acciones simuladas)</span>}
+          {typeof p.id !== 'number' && <span style={{ marginLeft: 8, color: '#b5bfbb', fontSize: 10.5 }}>(demo — acciones simuladas)</span>}
         </span>
         <button style={dS.annulBtn} onClick={() => setShowRejectModal(true)}>
           <Icon name="slash" size={13} /> Anular
