@@ -108,27 +108,68 @@ _SQL_STOCK_EQUIPOS = """
 
 _SQL_VM_SUMINISTROS = "SELECT * FROM GEOREF.VM_SUMINISTROS"
 
+# Obs (TOB_DESCRIPCION) y fotos (OBO_INFO_ADICIONAL) usan columnas distintas en el pivot,
+# por eso se consultan en dos sub-pivots separados y se unen por ORD_NUMERO.
 _SQL_PIVOT_APP_MOVIL = """
-    SELECT *
+    SELECT a.ORD_NUMERO,
+           a."GABINETE",
+           a."SUBTERRANEO",
+           a."ALTURA",
+           a."AEREO",
+           a."EQUIPO_MEDICION_REEMPLAZADO",
+           a."ACOMETIDA_REALIZADA",
+           a."TAPA_REEMPLAZADA",
+           a."EQUIPO_DE_MEDICION_INSTALADO",
+           b."IMAGEN_1",
+           b."IMAGEN_2",
+           b."IMAGEN_3",
+           b."IMAGEN_4",
+           b."IMAGEN_5"
     FROM (
-        SELECT obs_ord.ORD_NUMERO, obs_ord.TOB_CODIGO,
-               obs_ord.TOB_DESCRIPCION, obs_ord.OBO_INFO_ADICIONAL,
-               obs_ord.IMD_ID
-        FROM xxsigec.xxco_observaciones_ordenativ_v obs_ord,
-             xxsigec.ordenativos ord
-        WHERE ord.ord_numero        = obs_ord.ord_numero
-          AND ord.tor_codigo        = 'CE'
-          AND ord.sec_codigo_origen = 'PROTELEM'
-    )
-    PIVOT (
-        MAX(TOB_DESCRIPCION), MAX(OBO_INFO_ADICIONAL) AS TOB_DESCRIPCION
-        FOR TOB_CODIGO IN (
-            'APP4SITIO_1','APP4SITIO_2','APP4SITIO_3','APP4SITIO_4',
-            'APP4TRAB_1', 'APP4TRAB_2', 'APP4TRAB_3', 'APP4TRAB_4','APP4TRAB_5',
-            'APP4OBS_4',  'APP4OBS_80','APP4OBS_81','APP4OBS_82',
-            'APP4OBS_83', 'APP4OBS_84','APP4OBS_11'
+        SELECT *
+        FROM (
+            SELECT obs.ORD_NUMERO, obs.TOB_CODIGO, obs.TOB_DESCRIPCION
+            FROM xxsigec.xxco_observaciones_ordenativ_v obs,
+                 xxsigec.ordenativos ord
+            WHERE ord.ord_numero        = obs.ord_numero
+              AND ord.tor_codigo        = 'CE'
+              AND ord.sec_codigo_origen = 'PROTELEM'
         )
-    )
+        PIVOT (
+            MAX(TOB_DESCRIPCION)
+            FOR TOB_CODIGO IN (
+                'APP4SITIO_3' AS "GABINETE",
+                'APP4SITIO_4' AS "SUBTERRANEO",
+                'APP4SITIO_2' AS "ALTURA",
+                'APP4SITIO_1' AS "AEREO",
+                'APP4TRAB_1'  AS "EQUIPO_MEDICION_REEMPLAZADO",
+                'APP4TRAB_2'  AS "ACOMETIDA_REALIZADA",
+                'APP4TRAB_3'  AS "TAPA_REEMPLAZADA",
+                'APP4TRAB_4'  AS "EQUIPO_DE_MEDICION_INSTALADO"
+            )
+        )
+    ) a
+    LEFT JOIN (
+        SELECT *
+        FROM (
+            SELECT obs.ORD_NUMERO, obs.TOB_CODIGO, obs.OBO_INFO_ADICIONAL
+            FROM xxsigec.xxco_observaciones_ordenativ_v obs,
+                 xxsigec.ordenativos ord
+            WHERE ord.ord_numero        = obs.ord_numero
+              AND ord.tor_codigo        = 'CE'
+              AND ord.sec_codigo_origen = 'PROTELEM'
+        )
+        PIVOT (
+            MAX(OBO_INFO_ADICIONAL)
+            FOR TOB_CODIGO IN (
+                'APP4OBS_80' AS "IMAGEN_1",
+                'APP4OBS_81' AS "IMAGEN_2",
+                'APP4OBS_82' AS "IMAGEN_3",
+                'APP4OBS_83' AS "IMAGEN_4",
+                'APP4OBS_84' AS "IMAGEN_5"
+            )
+        )
+    ) b ON a.ORD_NUMERO = b.ORD_NUMERO
 """
 
 # Columnas que el pivot top-10 produce por equipo (ver cuaderno Fabric v2:

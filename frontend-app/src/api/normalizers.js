@@ -70,6 +70,8 @@ export function normalizeParte(p) {
     fue_corregido: p.fue_corregido,
     anulado: p.anulado,
     lote: '',
+    // Control de Observaciones — null cuando no viene del backend (mock o resumen sin detalle)
+    observaciones_app: p.observaciones_app ?? null,
   };
 }
 

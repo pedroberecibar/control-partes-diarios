@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Icon, PARTE_ESTADO_CONFIG, StatusChip, TRAZA_CONFIG } from '../components/Icon';
 import { VisorModal } from '../components/visor/Visor';
-import { getPartes } from '../api/partesApi';
+import { getPartes, getCodEpecValores } from '../api/partesApi';
+import { getLotes } from '../api/lotesApi';
 import { normalizeParte } from '../api/normalizers';
 
 const PER_PAGE = 25;
@@ -63,24 +64,55 @@ const CONTRATISTAS_OPCIONES = [
 ];
 
 const STORAGE_KEY = 'bandeja_estado';
-const DEFAULTS = { filters: { id_trazas: [], id_estados: [], contratista_ids: [], search: '' }, page: 1, sortCol: 'id', sortDir: 'desc' };
+const DEFAULTS = { filters: { id_trazas: [], id_estados: [], contratista_ids: [], lote_ids: [], cod_epec_ids: [], search: '' }, page: 1, sortCol: 'id', sortDir: 'desc' };
 
 function readStorage() {
   try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
 }
 
-export function BandejaAuditoria({ onOpenDetalle }) {
+export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
   const [partes, setPartes]           = useState([]);
   const [total, setTotal]             = useState(0);
   const [loading, setLoading]         = useState(true);
   const [usingMock, setUsingMock]     = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [filters, setFilters]         = useState(() => readStorage().filters ?? DEFAULTS.filters);
+  const [filters, setFilters]         = useState(() => {
+    const stored = readStorage().filters ?? DEFAULTS.filters;
+    // Garantizar que lote_ids exista aunque venga de storage viejo
+    return { ...DEFAULTS.filters, ...stored };
+  });
+  const [codEpecOpciones, setCodEpecOpciones] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sortCol, setSortCol]         = useState(() => readStorage().sortCol ?? DEFAULTS.sortCol);
   const [sortDir, setSortDir]         = useState(() => readStorage().sortDir ?? DEFAULTS.sortDir);
   const [page, setPage]               = useState(() => readStorage().page ?? DEFAULTS.page);
   const [visorParte, setVisorParte]   = useState(null);
+  const [lotesDisponibles, setLotesDisponibles] = useState([]);
+
+  // Cargar valores distinct de cod_epec para el filtro de sidebar
+  useEffect(() => {
+    getCodEpecValores()
+      .then((vals) => setCodEpecOpciones(Array.isArray(vals) ? vals : []))
+      .catch(() => {});
+  }, []);
+
+  // Cargar lista de lotes procesados para el filtro manual
+  useEffect(() => {
+    getLotes(0, 200)
+      .then((res) => {
+        const procesados = (res.items || []).filter((l) => l.estado === 'PROCESADO_OK');
+        setLotesDisponibles(procesados.map((l) => ({ id: l.id, label: l.nombre_archivo })));
+      })
+      .catch(() => {}); // silencioso — si falla, el filtro queda vacío
+  }, []);
+
+  // Cuando App.jsx navega desde ListaLotes con un loteId, aplicar el filtro inmediatamente
+  useEffect(() => {
+    if (initialLoteId != null) {
+      setFilters((f) => ({ ...f, lote_ids: [initialLoteId] }));
+      setPage(1);
+    }
+  }, [initialLoteId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +124,8 @@ export function BandejaAuditoria({ onOpenDetalle }) {
       id_trazas: filters.id_trazas,
       id_estados: filters.id_estados,
       contratista_ids: filters.contratista_ids,
+      lote_ids: filters.lote_ids ?? [],
+      cod_epec_ids: filters.cod_epec_ids ?? [],
       search: filters.search || undefined,
       sort_by: SORT_COL_BACKEND[sortCol] || 'id',
       sort_dir: sortDir,
@@ -117,7 +151,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
 
   function toggleFilter(key, id) {
     setFilters((f) => {
-      const arr = f[key];
+      const arr = f[key] ?? [];
       return { ...f, [key]: arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id] };
     });
     setPage(1);
@@ -153,7 +187,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
   const someSelected = selectedIds.size > 0;
 
   const activeFilterCount =
-    filters.id_trazas.length + filters.id_estados.length + filters.contratista_ids.length;
+    filters.id_trazas.length + filters.id_estados.length + filters.contratista_ids.length + (filters.lote_ids?.length ?? 0) + (filters.cod_epec_ids?.length ?? 0);
 
   const bS = {
     root: { display: 'flex', height: '100%', overflow: 'hidden', background: '#f5f7f6' },
@@ -205,7 +239,7 @@ export function BandejaAuditoria({ onOpenDetalle }) {
           {activeFilterCount > 0 && (
             <button
               style={bS.clearBtn}
-              onClick={() => { setFilters({ id_trazas: [], id_estados: [], contratista_ids: [], search: '' }); setPage(1); }}
+              onClick={() => { setFilters({ id_trazas: [], id_estados: [], contratista_ids: [], lote_ids: [], cod_epec_ids: [], search: '' }); setPage(1); }}
             >
               Limpiar
             </button>
@@ -261,6 +295,63 @@ export function BandejaAuditoria({ onOpenDetalle }) {
               </div>
             );
           })}
+        </div>
+
+        {/* Sección: Cód. EPEC */}
+        <div style={bS.filterSection}>
+          <div style={bS.filterSectionLabel}>Cód. EPEC</div>
+          {codEpecOpciones.length === 0 ? (
+            <span style={{ fontSize: 11, color: '#aab5b0', fontStyle: 'italic' }}>Sin datos</span>
+          ) : (
+            codEpecOpciones.map((code) => {
+              const active = (filters.cod_epec_ids ?? []).includes(code);
+              return (
+                <div
+                  key={code}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer' }}
+                  onClick={() => toggleFilter('cod_epec_ids', code)}
+                >
+                  <input type="checkbox" checked={active} readOnly style={bS.checkbox} />
+                  <span style={{ fontSize: 11.5, color: active ? '#124e2f' : '#4a5550', fontWeight: active ? 600 : 400, fontFamily: "'JetBrains Mono', monospace" }}>{code}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Sección: Archivo / Lote */}
+        <div style={bS.filterSection}>
+          <div style={bS.filterSectionLabel}>Archivo (Lote)</div>
+          {lotesDisponibles.length === 0 ? (
+            <span style={{ fontSize: 11, color: '#aab5b0', fontStyle: 'italic' }}>Sin lotes procesados</span>
+          ) : (
+            lotesDisponibles.map((lote) => {
+              const active = (filters.lote_ids ?? []).includes(lote.id);
+              return (
+                <div
+                  key={lote.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer' }}
+                  onClick={() => toggleFilter('lote_ids', lote.id)}
+                >
+                  <input type="checkbox" checked={active} readOnly style={bS.checkbox} />
+                  <span
+                    title={lote.label}
+                    style={{
+                      fontSize: 11,
+                      color: active ? '#124e2f' : '#4a5550',
+                      fontWeight: active ? 600 : 400,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: 160,
+                    }}
+                  >
+                    {lote.label}
+                  </span>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 

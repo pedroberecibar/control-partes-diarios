@@ -13,6 +13,8 @@ export function getPartes(params = {}) {
   return apiFetch(`/api/v1/partes/?${qs}`);
 }
 
+export const getCodEpecValores = () => apiFetch('/api/v1/partes/cod-epec/valores');
+
 export const getParte = (id) => apiFetch(`/api/v1/partes/${id}`);
 
 export const getVisor = (id) => apiFetch(`/api/v1/partes/${id}/visor`);

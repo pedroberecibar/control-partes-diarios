@@ -29,6 +29,8 @@ def listar_partes(
     id_trazas: list[int] = Query(default=[]),
     id_estados: list[int] = Query(default=[]),
     contratista_ids: list[int] = Query(default=[]),
+    lote_ids: list[int] = Query(default=[]),
+    cod_epec_ids: list[int] = Query(default=[]),
     search: str | None = Query(None),
     sort_by: str = Query("id"),
     sort_dir: str = Query("desc"),
@@ -41,10 +43,18 @@ def listar_partes(
         id_trazas=id_trazas or None,
         id_estados=id_estados or None,
         contratista_ids=contratista_ids or None,
+        lote_ids=lote_ids or None,
+        cod_epec_ids=cod_epec_ids or None,
         search=search,
         sort_by=sort_by,
         sort_dir=sort_dir,
     )
+
+
+@router.get("/cod-epec/valores", response_model=list[int], summary="Distinct cod_epec presentes en la DB")
+def listar_cod_epec_valores(db: Session = Depends(get_db)):
+    """Devuelve los valores distintos de cod_epec ordenados ascendente."""
+    return ParteService(db).listar_cod_epec_valores()
 
 
 @router.get("/{parte_id}", response_model=ParteDetalleResponse, summary="Detalle de un parte")

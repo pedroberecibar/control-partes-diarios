@@ -2,36 +2,63 @@ import { useEffect, useState } from 'react';
 import { Icon, PARTE_ESTADO_CONFIG, StatusChip, TRAZA_CONFIG } from '../components/Icon';
 import { EmbeddedVisor } from '../components/visor/Visor';
 import { getPartePhotos } from '../data/visorMock';
-import { editarParte } from '../api/partesApi';
+import { editarParte, getParte } from '../api/partesApi';
 import { getAuditoria } from '../api/auditoriaApi';
+import { normalizeParteDetalle } from '../api/normalizers';
 
 const USUARIO_ID_DEFAULT = 1; // placeholder hasta wiring de auth
 
+// Trazas que indican match en Cruce A (vinculación con orden CE propia)
+const TRAZAS_CRUCE_A = new Set([
+  'Original OK', 'Corregido Nro EQP Invertidos', 'Corregido Nro Medidor',
+  'Corregido Medidor Vacio', 'Informado - No Ejecutado',
+]);
+// Trazas que indican match en Cruce B (orden existe pero no es CE)
+const TRAZAS_CRUCE_B = new Set(['No Corresponde TOR CE']);
+// Trazas que indican rescate en Cruce C (suministro corregido por medidor)
+const TRAZAS_CRUCE_C = new Set(['Corregido Sumi', 'Corregido Sumi Nro EQP']);
+
 function buildCruces(p) {
-  const ordMatch = p.ord_nro && p.ord_nro !== '—';
-  const usesMatch = p.diferencia_uses == null || p.diferencia_uses === 0;
-  const codMatch = !p.cod_epec_sugerido || String(p.cod_epec) === String(p.cod_epec_sugerido);
+  const traza = p.traza || '';
+
+  const matchA = TRAZAS_CRUCE_A.has(traza);
+  const matchB = TRAZAS_CRUCE_B.has(traza);
+  const matchC = TRAZAS_CRUCE_C.has(traza);
+
+  // Cruce A: vinculación parte ↔ orden CE de la misma contratista por suministro + tolerancia de fecha
+  const detailA = matchA
+    ? `Orden CE ${p.ord_nro !== '—' ? p.ord_nro : 'encontrada'} vinculada por suministro ${p.suministro} dentro de la ventana de tolerancia.`
+    : matchB || matchC
+      ? 'No aplica — el parte fue procesado por Cruce B o C.'
+      : 'Sin orden CE propia encontrada para este suministro en la ventana de fecha.';
+
+  // Cruce B: clasificación de partes con orden existente pero de tipo no-CE (IC, CX, MP, RX, etc.)
+  const detailB = matchB
+    ? `Orden ${p.ord_nro !== '—' ? p.ord_nro : 'detectada'} encontrada pero corresponde a un tipo no-CE (${p.tipo_discrepancia || 'IC/CX/MP/RX'}); fuera del alcance del proceso de pago.`
+    : matchA
+      ? 'No aplica — el parte fue resuelto en Cruce A.'
+      : matchC
+        ? 'No aplica — el parte fue resuelto en Cruce C.'
+        : 'No se encontró ninguna orden (CE ni no-CE) para este suministro.';
+
+  // Cruce C: rescate por número de medidor cuando el operario declaró un suministro incorrecto
+  const detailC = matchC
+    ? traza === 'Corregido Sumi'
+      ? `Suministro corregido vía número de medidor (EQP coincide con base técnica); suministro real asignado: ${p.suministro}.`
+      : `Suministro corregido vía número de medidor (EQP con discrepancia en retirado); suministro real asignado: ${p.suministro}.`
+    : matchA
+      ? 'No aplica — el parte fue resuelto en Cruce A.'
+      : matchB
+        ? 'No aplica — el parte fue descartado en Cruce B.'
+        : 'El número de medidor no coincidió con ningún suministro en la base técnica.';
+
   return {
-    A: {
-      match: ordMatch,
-      detail: ordMatch
-        ? `ORD_NRO ${p.ord_nro} encontrada en dim_ord.`
-        : 'No se encontró ordenativo para este suministro.',
-    },
-    B: {
-      match: usesMatch,
-      detail: usesMatch
-        ? `USES declarado (${p.valor_uses_origen ?? '—'}) coincide con SIGEC.`
-        : `Diferencia USES detectada: ${p.diferencia_uses > 0 ? '+' : ''}${p.diferencia_uses} (declarado ${p.valor_uses_origen ?? '—'} vs SIGEC ${p.valor_uses_obs ?? '—'}).`,
-    },
-    C: {
-      match: codMatch,
-      detail: codMatch
-        ? `COD_EPEC ${p.cod_epec} coincide con SIGEC.`
-        : `COD_EPEC declarado ${p.cod_epec} difiere del SIGEC (${p.cod_epec_sugerido}).${p.diferencia_uses != null && p.diferencia_uses !== 0 ? ` Flag: USES_DIFF = ${p.diferencia_uses > 0 ? '+' : ''}${p.diferencia_uses}.` : ''}`,
-    },
+    A: { match: matchA, detail: detailA },
+    B: { match: matchB, detail: detailB },
+    C: { match: matchC, detail: detailC },
   };
 }
+
 
 const BITACORA_COLORS = {
   system:  { icon: 'circle',        color: '#b5bfbb', bg: '#f5f7f6' },
@@ -67,12 +94,14 @@ function fmtDateTime(iso) {
 }
 
 export function DetallePartes({ parte, onBack }) {
-  const p = parte || {
+  const [p, setP] = useState(parte || {
     id: 'PD-2025-00042', contratista: 'CONECTAR', operario: 'López, M.',
     fecha: '01/04/2025', suministro: '412881', cod_epec: '1003', ord_nro: 'CE-482301',
     traza: 'Error Sumi Nro Med', estado: 'En Revisión', medidor_dec: 'M74829103',
     uses: '1.00', lote: 'CONECTAR_2025-04-01', version: 2,
-  };
+  });
+
+  const [loadingDetail, setLoadingDetail] = useState(false);
 
   const [tab, setTab]                   = useState('detalle');
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -83,6 +112,28 @@ export function DetallePartes({ parte, onBack }) {
     medidor:     p.medidor_dec || '',
     observacion: '',
   });
+
+  useEffect(() => {
+    if (parte && typeof parte.id === 'number') {
+      let cancelled = false;
+      setLoadingDetail(true);
+      getParte(parte.id)
+        .then((res) => {
+          if (cancelled) return;
+          const full = normalizeParteDetalle(res);
+          setP(full);
+          setEditFields(prev => ({
+            ...prev,
+            cod_epec: full.cod_epec || '',
+            ord_nro: full.ord_nro || '',
+            medidor: full.medidor_dec || '',
+          }));
+        })
+        .catch((err) => console.error("Error al cargar detalle:", err))
+        .finally(() => { if (!cancelled) setLoadingDetail(false); });
+      return () => { cancelled = true; };
+    }
+  }, [parte]);
   const [saving, setSaving]     = useState(false);
   const [saved, setSaved]       = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -352,6 +403,43 @@ export function DetallePartes({ parte, onBack }) {
                 </div>
               </div>
 
+              {/* Observaciones del Operario — solo para Aprobados (pasaron por Etapa 4) */}
+              {p.id_estado === 1 && (
+                <div style={dS.section}>
+                  <div style={dS.sectionHeader}>
+                    <Icon name="clipboard" size={14} color="#6b7772" />
+                    <span style={dS.sectionTitle}>Observaciones del Operario</span>
+                    <span style={{ fontSize: 10.5, color: '#8f9c97' }}>App móvil · 8 ítems</span>
+                  </div>
+                  {p.observaciones_app ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', paddingTop: 4 }}>
+                      {[
+                        { key: 'gabinete',                      label: 'Gabinete' },
+                        { key: 'subterraneo',                   label: 'Subterráneo' },
+                        { key: 'altura',                        label: 'Trabajo en Altura' },
+                        { key: 'aereo',                         label: 'Trabajo Aéreo' },
+                        { key: 'equipo_medicion_reemplazado',   label: 'Eq. Medición Reemplazado' },
+                        { key: 'acometida_realizada',           label: 'Acometida Realizada' },
+                        { key: 'tapa_reemplazada',              label: 'Tapa Reemplazada' },
+                        { key: 'equipo_medicion_instalado',     label: 'Eq. Medición Instalado' },
+                      ].map(({ key, label }) => {
+                        const val = p.observaciones_app[key];
+                        return (
+                          <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', borderRadius: 4, background: val ? '#edf5f0' : '#f5f7f6' }}>
+                            <span style={{ fontSize: 11, color: '#4a5550' }}>{label}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: val ? '#155a2e' : '#8f9c97', background: val ? '#d4edda' : '#eaeeec', padding: '1px 7px', borderRadius: 3 }}>
+                              {val ? 'Sí' : 'No'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 11.5, color: '#aab5b0', fontStyle: 'italic' }}>Datos de observaciones no disponibles.</span>
+                  )}
+                </div>
+              )}
+
               <div style={dS.section}>
                 <div style={dS.sectionHeader}>
                   <Icon name="git-branch" size={14} color="#6b7772" />
@@ -365,10 +453,12 @@ export function DetallePartes({ parte, onBack }) {
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: cruce.match ? '#155a2e' : '#c0392b' }}>
-                          Cruce {key} — {cruce.match ? 'Match encontrado' : 'Divergencia detectada'}
+                        <span style={{ fontSize: 12, fontWeight: 600, color: cruce.match ? '#155a2e' : '#6b7772' }}>
+                          {key === 'A' && (cruce.match ? 'Cruce A — Vinculado con orden CE propia' : 'Cruce A — Sin orden CE propia')}
+                          {key === 'B' && (cruce.match ? 'Cruce B — Clasificado como No-CE (descartado)' : 'Cruce B — Sin orden no-CE detectada')}
+                          {key === 'C' && (cruce.match ? 'Cruce C — Suministro rescatado por medidor' : 'Cruce C — Sin rescate por medidor')}
                         </span>
-                        <Icon name={cruce.match ? 'check-circle' : 'alert-triangle'} size={13} color={cruce.match ? '#1d8348' : '#c0392b'} />
+                        <Icon name={cruce.match ? 'check-circle' : 'minus-circle'} size={13} color={cruce.match ? '#1d8348' : '#b5bfbb'} />
                       </div>
                       <div style={dS.cruceDetail}>{cruce.detail}</div>
                     </div>

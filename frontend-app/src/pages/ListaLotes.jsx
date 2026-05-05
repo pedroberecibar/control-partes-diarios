@@ -8,7 +8,7 @@ const ESTADOS_OK         = ['OK', 'PROCESADO_OK'];
 const ESTADOS_PROCESANDO = ['RECIBIDO', 'VALIDANDO', 'PROCESANDO', 'EN_CORE', 'EN_OBS'];
 const ESTADOS_ERROR      = ['RECHAZADO_SINTAXIS', 'ERROR'];
 
-export function ListaLotes({ onSubir }) {
+export function ListaLotes({ onSubir, onVerEnBandeja }) {
   const [lotes, setLotes]               = useState(LOTES_DATA);
   const [usingMock, setUsingMock]       = useState(false);
   const [search, setSearch]             = useState('');
@@ -202,14 +202,21 @@ export function ListaLotes({ onSubir }) {
                     {lote.errores > 0 ? lote.errores : '—'}
                   </td>
                   <td style={lS.td}>
-                    <button
-                      style={lS.actionBtn}
-                      title="Ver detalle"
-                      onMouseEnter={(e) => { e.currentTarget.style.background = '#edf5f0'; e.currentTarget.style.color = '#124e2f'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#8f9c97'; }}
-                    >
-                      <Icon name="eye" size={13} />
-                    </button>
+                    {ESTADOS_OK.includes(lote.estado) ? (
+                      <button
+                        style={lS.actionBtn}
+                        title="Ver partes en Bandeja"
+                        onClick={() => onVerEnBandeja?.(lote._id)}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#edf5f0'; e.currentTarget.style.color = '#124e2f'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#8f9c97'; }}
+                      >
+                        <Icon name="eye" size={13} />
+                      </button>
+                    ) : (
+                      <button style={{ ...lS.actionBtn, opacity: 0.3, cursor: 'default' }} title="Solo disponible para lotes procesados" disabled>
+                        <Icon name="eye" size={13} />
+                      </button>
+                    )}
                     <button
                       style={{
                         ...lS.actionBtn,

@@ -59,6 +59,9 @@ _DATOS_DIM_TRAZA: list[tuple[int, str]] = [
     (13, "Informado - No Ejecutado"),
     (14, "Código de Tarea No Mapeado"),
     (15, "Fecha Inválida"),
+    (16, "Duplicado Exacto en Archivo Origen"),
+    (17, "Datos Clave Faltantes"),
+    (18, "Registro Ya Procesado en Lote Anterior"),
 ]
 
 

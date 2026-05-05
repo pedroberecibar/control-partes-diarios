@@ -93,14 +93,14 @@ COLS_FACT = [
 # Columnas de observación — pares (nombre en app movil, nombre en tabla de reglas)
 # El orden importa: el Hamming se calcula columna-a-columna en este orden.
 OBS_COLS: list[tuple[str, str]] = [
-    ("'APP4SITIO_3'", "GABINETE"),
-    ("'APP4SITIO_4'", "SUBTERRANEO"),
-    ("'APP4SITIO_2'", "ALTURA"),
-    ("'APP4SITIO_1'", "AEREO"),
-    ("'APP4TRAB_1'",  "EQUIPO_MEDICION_REEMPLAZADO"),
-    ("'APP4TRAB_2'",  "ACOMETIDA_REALIZADA"),
-    ("'APP4TRAB_3'",  "TAPA_REEMPLAZADA"),
-    ("'APP4TRAB_4'",  "EQUIPO_DE_MEDICION_INSTALADO"),
+    ("GABINETE",                     "GABINETE"),
+    ("SUBTERRANEO",                  "SUBTERRANEO"),
+    ("ALTURA",                       "ALTURA"),
+    ("AEREO",                        "AEREO"),
+    ("EQUIPO_MEDICION_REEMPLAZADO",  "EQUIPO_MEDICION_REEMPLAZADO"),
+    ("ACOMETIDA_REALIZADA",          "ACOMETIDA_REALIZADA"),
+    ("TAPA_REEMPLAZADA",             "TAPA_REEMPLAZADA"),
+    ("EQUIPO_DE_MEDICION_INSTALADO", "EQUIPO_DE_MEDICION_INSTALADO"),
 ]
 
 

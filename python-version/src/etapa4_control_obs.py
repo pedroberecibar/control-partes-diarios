@@ -45,11 +45,11 @@ VALOR_USES_COD_11 = config.VALOR_USES_COD_11
 
 # Cols de imágenes en el pivot (no son OBS_COLS — se usan solo en dim_img).
 COLS_IMG_PIVOT = [
-    "'APP4OBS_80'_TOB_DESCRIPCION",
-    "'APP4OBS_81'_TOB_DESCRIPCION",
-    "'APP4OBS_82'_TOB_DESCRIPCION",
-    "'APP4OBS_83'_TOB_DESCRIPCION",
-    "'APP4OBS_84'_TOB_DESCRIPCION",
+    "IMAGEN_1",
+    "IMAGEN_2",
+    "IMAGEN_3",
+    "IMAGEN_4",
+    "IMAGEN_5",
 ]
 
 # Cols de salida (tal como espera Power BI / paridad con control_obs_pd_ce.py L.451-466).
@@ -113,18 +113,28 @@ def _cargar_base(df_fact_input: pd.DataFrame | None = None) -> tuple[pd.DataFram
 
 def _join_con_pivot_app(df_base: pd.DataFrame) -> pd.DataFrame:
     """Left join con pivot_resul_app_movil por ORD_NRO ↔ ORD_NUMERO."""
-    cols_pivot_necesarias = (
-        ["ORD_NUMERO"]
-        + [c for c, _ in OBS_COLS]
-        + COLS_IMG_PIVOT
-    )
+    cols_obs_pivot = [c for c, _ in OBS_COLS]
+    cols_pivot_necesarias = ["ORD_NUMERO"] + cols_obs_pivot + COLS_IMG_PIVOT
     df_pivot = io.read_table(
         "pivot_resul_app_movil", capa="seed", columns=cols_pivot_necesarias
     )
+
+    # Validación: confirmar que el pivot trae todas las columnas de obs esperadas.
+    faltantes = [c for c in cols_obs_pivot if c not in df_pivot.columns]
+    if faltantes:
+        log.error("PIVOT — columnas de obs FALTANTES en pivot_resul_app_movil: %s", faltantes)
+        raise ValueError(f"pivot_resul_app_movil no tiene las columnas esperadas: {faltantes}")
+    con_obs = df_pivot[cols_obs_pivot].notna().any(axis=1).sum()
+    log.info("   Pivot: %d filas, %d con al menos 1 observación (%.1f%%).",
+             len(df_pivot), con_obs, 100 * con_obs / max(len(df_pivot), 1))
+
     # ORD_NUMERO en pivot es int64; ORD_NRO en fact es Int64. Compatibles.
     df = df_base.merge(
         df_pivot, left_on="ORD_NRO", right_on="ORD_NUMERO", how="left",
     )
+    n_con_match = df["ORD_NUMERO"].notna().sum()
+    log.info("   Join pivot: %d partes aprobados, %d con match en pivot (%.1f%%).",
+             len(df), n_con_match, 100 * n_con_match / max(len(df), 1))
     return df
 
 
@@ -140,6 +150,15 @@ def _normalizar_obs(df: pd.DataFrame) -> pd.DataFrame:
 
     cols_app = [f"_APP_{cr}" for _, cr in OBS_COLS]
     df["_SIN_OBS"] = (df[cols_app].sum(axis=1) == 0)
+
+    # Validación: mostrar distribución de observaciones tras normalización.
+    n_sin_obs = int(df["_SIN_OBS"].sum())
+    n_con_obs = len(df) - n_sin_obs
+    log.info("   Normalización obs: %d con obs, %d sin obs (total=%d).", n_con_obs, n_sin_obs, len(df))
+    for col_app, col_regla in OBS_COLS:
+        n = int(df[f"_APP_{col_regla}"].sum())
+        if n > 0:
+            log.info("     _APP_%-35s → %d positivos", col_regla, n)
     return df
 
 
@@ -363,8 +382,9 @@ def _calcular_discrepancia(df: pd.DataFrame) -> pd.DataFrame:
 # =============================================================================
 
 def _seleccionar_y_guardar(df: pd.DataFrame, cols_base: list[str]) -> pd.DataFrame:
-    """Conserva COLS_BASE (snapshot post-PASO 1) + COLS_CONTROL_EXTRA. Escribe a gold."""
-    cols_finales = list(dict.fromkeys(cols_base + COLS_CONTROL_EXTRA))  # dedup preservando orden
+    """Conserva COLS_BASE + _APP_* (para ParteImportService) + COLS_CONTROL_EXTRA. Escribe a gold."""
+    cols_app = [f"_APP_{cr}" for _, cr in OBS_COLS]
+    cols_finales = list(dict.fromkeys(cols_base + cols_app + COLS_CONTROL_EXTRA))  # dedup preservando orden
     cols_existentes = [c for c in cols_finales if c in df.columns]
     df_final = df[cols_existentes].copy()
 
@@ -444,11 +464,28 @@ def imprimir_panel(df_panel: pd.DataFrame) -> dict:
 # =============================================================================
 
 def _limpiar_url_firebase(s: pd.Series) -> pd.Series:
-    """split(' - ')[0] + reemplazos `?alt:media` → `?alt=media` y `&token:` → `&token=`."""
-    base = s.astype("string").str.split(" - ", n=1).str[0]
-    base = base.str.replace("?alt:media", "?alt=media", regex=False)
-    base = base.str.replace("&token:",    "&token=",    regex=False)
-    return base.where(s.astype("string").fillna("").ne(""), other=pd.NA)
+    """Extrae la mejor URL de imagen disponible desde OBO_INFO_ADICIONAL.
+
+    SIGEC almacena en OBO_INFO_ADICIONAL uno de estos formatos:
+      - Solo ruta local:  /storage/emulated/0/Pictures/.../ORD79046730_20251009.jpg
+      - Ruta + Firebase:  /storage/.../ORD79046730.jpg-https://firebasestorage.../...?alt:media&token:xxx
+
+    Prefiere la URL Firebase cuando está presente; si no, usa la ruta local.
+    Descarta labels de texto plano sin barra ni http ('Imagen 1', etc.).
+    """
+    base = s.astype("string")
+    # Extraer la parte Firebase si existe (todo desde 'https://' en adelante)
+    firebase = base.str.extract(r"(https?://.*)", expand=False)
+    firebase = firebase.str.replace("?alt:media", "?alt=media", regex=False)
+    firebase = firebase.str.replace("&token:",    "&token=",    regex=False)
+    # Usar Firebase URL si está; si no, usar el string completo (ruta local)
+    result = firebase.where(firebase.notna(), other=base)
+    # Descartar labels sin barra ni protocolo ('Imagen 1', etc.)
+    is_valid = (
+        result.str.startswith("/").fillna(False)
+        | result.str.startswith("http").fillna(False)
+    )
+    return result.where(is_valid, other=pd.NA)
 
 
 def generar_dim_img_app_pd(df_control: pd.DataFrame) -> pd.DataFrame:

@@ -84,7 +84,8 @@ _COLS_DIM_ORD = [
 
 def _to_int64_nullable(s: pd.Series) -> pd.Series:
     """Cast a Int64 (nullable) tolerante a NaN. Equivalente a `.cast("long")` de Spark."""
-    return pd.to_numeric(s, errors="coerce").astype("Int64")
+    s_num = pd.to_numeric(s, errors="coerce")
+    return np.trunc(s_num).astype("Int64")
 
 
 def _to_double(s: pd.Series) -> pd.Series:

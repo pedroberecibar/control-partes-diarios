@@ -20,6 +20,7 @@ export default function App() {
   const [role, setRole]               = useState('auditor');
   const [collapsed, setCollapsed]     = useState(false);
   const [activeParte, setActiveParte] = useState(null);
+  const [activeLoteId, setActiveLoteId] = useState(null);
   const [toasts, setToasts]           = useState([]);
 
   const meta = SCREEN_META[screen] || { title: screen, subtitle: '' };
@@ -34,6 +35,12 @@ export default function App() {
   function handleNav(s) {
     setScreen(s);
     if (s !== 'detalle') setActiveParte(null);
+    if (s === 'bandeja') setActiveLoteId(null);
+  }
+
+  function handleVerEnBandeja(loteId) {
+    setActiveLoteId(loteId);
+    setScreen('bandeja');
   }
 
   function handleOpenDetalle(parte) {
@@ -70,9 +77,9 @@ export default function App() {
           onRoleChange={handleRoleChange}
         />
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {screen === 'bandeja'    && <BandejaAuditoria onOpenDetalle={handleOpenDetalle} />}
+          {screen === 'bandeja'    && <BandejaAuditoria onOpenDetalle={handleOpenDetalle} initialLoteId={activeLoteId} />}
           {screen === 'detalle'    && <DetallePartes parte={activeParte} onBack={() => setScreen('bandeja')} />}
-          {screen === 'lotes'      && <ListaLotes onSubir={() => setScreen('subida')} />}
+          {screen === 'lotes'      && <ListaLotes onSubir={() => setScreen('subida')} onVerEnBandeja={handleVerEnBandeja} />}
           {screen === 'subida'     && <SubidaArchivos onBack={() => setScreen('lotes')} />}
           {screen === 'calidad'    && <DashboardCalidad />}
           {screen === 'operarios'  && <DashboardOperarios />}

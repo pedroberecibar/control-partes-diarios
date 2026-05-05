@@ -21,6 +21,16 @@ from src import io_lakehouse as io
 
 log = logging.getLogger(__name__)
 
+# Trazas de rescate (IDs 16-18) — usadas por parte_import_service para filas
+# que el motor no puede procesar limpiamente. Se añaden al Parquet en la próxima
+# ejecución del pipeline; este fallback permite que la API resuelva los nombres
+# sin necesidad de regenerar el Parquet.
+_TRAZA_RESCUE_FALLBACK: dict[int, str] = {
+    16: "Duplicado Exacto en Archivo Origen",
+    17: "Datos Clave Faltantes",
+    18: "Registro Ya Procesado en Lote Anterior",
+}
+
 
 @lru_cache(maxsize=1)
 def _traza_map() -> dict[int, str]:
@@ -49,7 +59,8 @@ def _usuarios_map() -> dict[int, str]:
 def traza(id_traza: int | None) -> str | None:
     if id_traza is None:
         return None
-    return _traza_map().get(int(id_traza))
+    key = int(id_traza)
+    return _traza_map().get(key) or _TRAZA_RESCUE_FALLBACK.get(key)
 
 
 def estado(id_estado: int | None) -> str | None:

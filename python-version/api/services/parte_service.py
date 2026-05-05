@@ -78,6 +78,8 @@ class ParteService:
         id_trazas: list[int] | None = None,
         id_estados: list[int] | None = None,
         contratista_ids: list[int] | None = None,
+        lote_ids: list[int] | None = None,
+        cod_epec_ids: list[int] | None = None,
         search: str | None = None,
         sort_by: str = "id",
         sort_dir: str = "desc",
@@ -100,6 +102,10 @@ class ParteService:
             query = query.filter(ParteDiarioProcesado.id_estado.in_(id_estados))
         if contratista_ids:
             query = query.filter(ParteDiarioProcesado.contratista_id.in_(contratista_ids))
+        if lote_ids:
+            query = query.filter(ParteDiarioProcesado.lote_id.in_(lote_ids))
+        if cod_epec_ids:
+            query = query.filter(ParteDiarioProcesado.cod_epec.in_(cod_epec_ids))
         if search:
             term = f"%{search}%"
             query = query.filter(or_(
@@ -135,6 +141,16 @@ class ParteService:
                 for p in items
             ],
         )
+
+    def listar_cod_epec_valores(self) -> list[int]:
+        rows = (
+            self.db.query(ParteDiarioProcesado.cod_epec)
+            .filter(ParteDiarioProcesado.cod_epec.isnot(None))
+            .distinct()
+            .order_by(ParteDiarioProcesado.cod_epec)
+            .all()
+        )
+        return [r.cod_epec for r in rows]
 
     # ------------------------------------------------------------------
     # Detalle (B6) y modal del visor

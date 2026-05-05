@@ -29,6 +29,13 @@ from api.db.models.domain_models import (
 
 log = logging.getLogger("api.services.parte_import")
 
+# IDs de traza/estado usados para filas rescatadas (no procesables limpiamente).
+# Deben coincidir con las entradas 16-18 de _DATOS_DIM_TRAZA en etapa3_dims_bi.py.
+_ESTADO_FUERA_ALCANCE = 4
+_TRAZA_DUPLICADO_INTRA = 16   # duplicado dentro del mismo archivo
+_TRAZA_DATOS_FALTANTES = 17   # suministro/fecha nulos
+_TRAZA_DUPLICADO_CROSS = 18   # hash ya existe en lote anterior
+
 
 # Mapeo de las 8 observaciones del motor (`_APP_<COL>` en df_final tras Etapa 4)
 # a las columnas booleanas del modelo. El orden es el mismo de `src/config.OBS_COLS`.
@@ -71,16 +78,14 @@ class ParteImportService:
         # Idempotencia: limpiar datos de un intento previo del mismo lote.
         self._limpiar_lote_previo(lote_id)
 
-        # Dedup intra-batch: conservar primera ocurrencia de cada hash.
-        if "ID_PARTE_HASH" in df_final.columns:
-            n_antes = len(df_final)
-            df_final = df_final.drop_duplicates(subset=["ID_PARTE_HASH"], keep="first")
-            n_dup = n_antes - len(df_final)
-            if n_dup:
-                log.warning("importar_lote — %d filas con ID_PARTE_HASH duplicado descartadas.", n_dup)
+        # Rescatar filas con suministro nulo (marcar como Fuera de Alcance con hash único).
+        df_final = self._rescatar_sumi_nulos(df_final)
 
-        # Excluir hashes ya existentes en otros lotes (colisión cross-lote).
-        df_final = self._excluir_hashes_existentes(df_final, lote_id)
+        # Rescatar duplicados intra-lote (primera ocurrencia queda intacta; resto marcado).
+        df_final = self._rescatar_duplicados_intra(df_final)
+
+        # Rescatar hashes ya existentes en otros lotes (marcar con cross-lote suffix).
+        df_final = self._rescatar_hashes_existentes(df_final, lote_id)
 
         if df_final.empty:
             log.warning("importar_lote — df_final vacío tras dedup/exclusión (lote_id=%d).", lote_id)
@@ -333,7 +338,29 @@ class ParteImportService:
         return value
 
     def _limpiar_lote_previo(self, lote_id: int) -> None:
-        """Elimina procesados, raws e imágenes de un intento previo del mismo lote."""
+        """Elimina imágenes, procesados y raws de un intento previo del mismo lote.
+
+        El delete bulk con synchronize_session=False no dispara el ORM cascade, y
+        SQLite no aplica FK CASCADE sin PRAGMA foreign_keys=ON (activado en database.py
+        desde la conexión, pero no garantizado en sesiones preexistentes). Para blindar
+        contra duplicados de imágenes, siempre eliminamos explícitamente en orden correcto:
+        imágenes → procesados → raws.
+        """
+        from sqlalchemy import select as sa_select
+
+        # 1. Eliminar imágenes vía subquery (sin cargar IDs en Python).
+        subq = (
+            sa_select(ParteDiarioProcesado.id)
+            .where(ParteDiarioProcesado.lote_id == lote_id)
+            .scalar_subquery()
+        )
+        n_imgs = (
+            self.db.query(ParteImagen)
+            .filter(ParteImagen.parte_procesado_id.in_(subq))
+            .delete(synchronize_session=False)
+        )
+
+        # 2. Eliminar procesados y raws.
         n = (
             self.db.query(ParteDiarioProcesado)
             .filter(ParteDiarioProcesado.lote_id == lote_id)
@@ -342,29 +369,88 @@ class ParteImportService:
         self.db.query(ParteDiarioRaw).filter(
             ParteDiarioRaw.lote_id == lote_id
         ).delete(synchronize_session=False)
-        if n:
-            log.info("_limpiar_lote_previo — %d procesados eliminados para lote %d.", n, lote_id)
 
-    def _excluir_hashes_existentes(self, df_final: pd.DataFrame, lote_id: int) -> pd.DataFrame:
-        """Descarta filas cuyo hash ya existe en procesados de otro lote."""
+        if n:
+            log.info(
+                "_limpiar_lote_previo — lote %d: %d procesados y %d imágenes eliminados.",
+                lote_id, n, n_imgs,
+            )
+
+    def _rescatar_sumi_nulos(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Marca con Fuera de Alcance las filas sin suministro (hash único por sufijo)."""
+        col = next(
+            (c for c in ("SUMINISTRO_RAW", "Suministro_Norm", "SUMINISTRO") if c in df.columns),
+            None,
+        )
+        if col is None:
+            return df
+        mask = df[col].isna() | (df[col].astype(str).str.strip() == "")
+        if not mask.any():
+            return df
+        df = df.copy()
+        n = int(mask.sum())
+        suffixes = pd.array([f"-ndata-{i}" for i in range(n)], dtype=object)
+        df.loc[mask, "ID_PARTE_HASH"] = (
+            df.loc[mask, "ID_PARTE_HASH"].fillna("null").astype(str).values + suffixes
+        )
+        df.loc[mask, "ID_ESTADO"] = _ESTADO_FUERA_ALCANCE
+        df.loc[mask, "ID_TRAZA"] = _TRAZA_DATOS_FALTANTES
+        log.info("_rescatar_sumi_nulos — %d filas sin suministro marcadas (traza=%d).", n, _TRAZA_DATOS_FALTANTES)
+        return df
+
+    def _rescatar_duplicados_intra(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Rescata duplicados de hash intra-lote: conserva la primera ocurrencia intacta."""
+        if "ID_PARTE_HASH" not in df.columns:
+            return df
+        dup_mask = df.duplicated(subset=["ID_PARTE_HASH"], keep="first")
+        if not dup_mask.any():
+            return df
+        df = df.copy()
+        n = int(dup_mask.sum())
+        suffixes = pd.array([f"-dup-{i}" for i in range(n)], dtype=object)
+        df.loc[dup_mask, "ID_PARTE_HASH"] = (
+            df.loc[dup_mask, "ID_PARTE_HASH"].fillna("null").astype(str).values + suffixes
+        )
+        df.loc[dup_mask, "ID_ESTADO"] = _ESTADO_FUERA_ALCANCE
+        df.loc[dup_mask, "ID_TRAZA"] = _TRAZA_DUPLICADO_INTRA
+        log.info("_rescatar_duplicados_intra — %d duplicados rescatados (traza=%d).", n, _TRAZA_DUPLICADO_INTRA)
+        return df
+
+    def _rescatar_hashes_existentes(self, df_final: pd.DataFrame, lote_id: int) -> pd.DataFrame:
+        """Rescata filas cuyo hash ya existe en otro lote (en lugar de descartarlas)."""
         if "ID_PARTE_HASH" not in df_final.columns:
             return df_final
         all_hashes = df_final["ID_PARTE_HASH"].dropna().unique().tolist()
         if not all_hashes:
             return df_final
-        existing = {
-            row[0]
-            for row in self.db.query(ParteDiarioProcesado.id_parte_hash)
-            .filter(ParteDiarioProcesado.id_parte_hash.in_(all_hashes))
-            .all()
-        }
-        if existing:
-            n = int(df_final["ID_PARTE_HASH"].isin(existing).sum())
-            log.warning(
-                "_excluir_hashes_existentes — %d partes con hash ya en otro lote descartados (lote_id=%d).",
-                n, lote_id,
+
+        existing: set[str] = set()
+        chunk_size = 900
+        for i in range(0, len(all_hashes), chunk_size):
+            chunk = all_hashes[i : i + chunk_size]
+            rows = (
+                self.db.query(ParteDiarioProcesado.id_parte_hash)
+                .filter(ParteDiarioProcesado.id_parte_hash.in_(chunk))
+                .all()
             )
-            df_final = df_final[~df_final["ID_PARTE_HASH"].isin(existing)].copy()
+            existing.update(row[0] for row in rows)
+
+        if not existing:
+            return df_final
+
+        df_final = df_final.copy()
+        mask = df_final["ID_PARTE_HASH"].isin(existing)
+        n = int(mask.sum())
+        suffixes = pd.array([f"-xlot-{i}" for i in range(n)], dtype=object)
+        df_final.loc[mask, "ID_PARTE_HASH"] = (
+            df_final.loc[mask, "ID_PARTE_HASH"].fillna("null").astype(str).values + suffixes
+        )
+        df_final.loc[mask, "ID_ESTADO"] = _ESTADO_FUERA_ALCANCE
+        df_final.loc[mask, "ID_TRAZA"] = _TRAZA_DUPLICADO_CROSS
+        log.warning(
+            "_rescatar_hashes_existentes — %d partes de lote anterior rescatados (lote_id=%d, traza=%d).",
+            n, lote_id, _TRAZA_DUPLICADO_CROSS,
+        )
         return df_final
 
 
