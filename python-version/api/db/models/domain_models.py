@@ -66,6 +66,9 @@ class ParteDiarioProcesado(Base):
     obs_tapa_reemplazada = Column(Boolean, nullable=False, default=False)
     obs_equipo_medicion_instalado = Column(Boolean, nullable=False, default=False)
 
+    # Operario declarado en el Excel de la contratista (cuando lo incluyen)
+    operario_excel = Column(String(200), nullable=True)
+
     # Snapshot completo del DataFrame del motor analítico — para debug, export y futuros recálculos
     metricas_analitica = Column(JSON, nullable=True)
 

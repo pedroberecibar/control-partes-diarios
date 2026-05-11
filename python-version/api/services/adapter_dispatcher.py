@@ -14,8 +14,17 @@ import pandas as pd
 log = logging.getLogger("api.services.adapter_dispatcher")
 
 
-def ejecutar_adapter(path: Path, nombre_contratista: str) -> pd.DataFrame | None:
-    """Aplica el adapter del contratista y devuelve el DataFrame normalizado (df_aux)."""
+def ejecutar_adapter(
+    path: Path,
+    nombre_contratista: str,
+    mapeo_columnas: dict[str, str] | None = None,
+) -> pd.DataFrame | None:
+    """Aplica el adapter del contratista y devuelve el DataFrame normalizado (df_aux).
+
+    Args:
+        mapeo_columnas: override de renombrado confirmado por el usuario
+            ({col_excel: campo_canonico}). None = usar MAPA_RENOMBRES del adapter.
+    """
     contratista_upper = nombre_contratista.upper()
 
     if contratista_upper == "CONECTAR":
@@ -23,12 +32,12 @@ def ejecutar_adapter(path: Path, nombre_contratista: str) -> pd.DataFrame | None
             obtener_codigos_habilitados,
             procesar_excel,
         )
-        df_aux, _ = procesar_excel(path, obtener_codigos_habilitados())
+        df_aux, _ = procesar_excel(path, obtener_codigos_habilitados(), mapeo_columnas=mapeo_columnas)
         return df_aux
 
     if contratista_upper == "COOPLYF":
         from src.etapa2_adapter_cooplyf import procesar_archivo
-        df_aux, _ = procesar_archivo(path)
+        df_aux, _ = procesar_archivo(path, mapeo_columnas=mapeo_columnas)
         return df_aux
 
     log.warning(

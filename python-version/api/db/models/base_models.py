@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, JSON, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, JSON, ForeignKey, Float, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from api.core.database import Base
@@ -39,6 +39,10 @@ class LoteArchivo(Base):
     # Progreso granular del worker — alimenta la barra de progreso del frontend.
     paso_actual = Column(String(40), nullable=True)
     progreso_pct = Column(Integer, nullable=False, server_default="0")
+
+    # Mapeo de columnas confirmado por el usuario al subir el lote.
+    # Formato JSON: {"col_excel": "campo_canonico", ...}. Null = usar MAPA_RENOMBRES del adapter.
+    mapeo_columnas = Column(Text, nullable=True)
 
     contratista = relationship("Contratista")
     usuario = relationship("UsuarioApp")

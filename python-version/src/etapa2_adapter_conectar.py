@@ -61,13 +61,16 @@ MAPA_RENOMBRES: dict[str, str] = {
     "Tarea": "codTiposManoObra", "Cod Tarea": "codTiposManoObra",
     "Cod. Tarea": "codTiposManoObra", "codTiposManoObra": "codTiposManoObra",
     "Tipo": "codTiposManoObra",
+    # Operario (opcional — algunas contratistas lo incluyen)
+    "Operario": "Operario", "operario": "Operario", "OPERARIO": "Operario",
+    "Nombre Operario": "Operario", "nombre_operario": "Operario",
 }
 
 # Columnas canónicas que deben existir en el output (se crean como None si faltan)
 COLS_FINAL = [
     "ID_Externo", "Fecha", "Suministro",
     "medidorColocado", "medidorRetirado", "codTiposManoObra",
-    "ORIGEN_ARCHIVO", "TRAZA_ADAPTER",
+    "Operario", "ORIGEN_ARCHIVO", "TRAZA_ADAPTER",
 ]
 
 COLS_TEXTO = [
@@ -93,8 +96,12 @@ def obtener_codigos_habilitados() -> list[str]:
     return [str(x) for x in df.dropna().unique()]
 
 
-def _detectar_header(path: Path) -> pd.DataFrame | None:
+def _detectar_header(
+    path: Path,
+    mapa_override: dict[str, str] | None = None,
+) -> pd.DataFrame | None:
     """Intenta varios header rows y devuelve el DataFrame con más columnas conocidas."""
+    mapa = mapa_override if mapa_override else MAPA_RENOMBRES
     mejor_df: pd.DataFrame | None = None
     mejor_score = -1
     for h in _HEADER_ROWS_CANDIDATOS:
@@ -103,7 +110,7 @@ def _detectar_header(path: Path) -> pd.DataFrame | None:
         except Exception:
             continue
         df.columns = df.columns.str.strip()
-        score = sum(1 for c in df.columns if c in MAPA_RENOMBRES)
+        score = sum(1 for c in df.columns if c in mapa)
         if score > mejor_score:
             mejor_score = score
             mejor_df = df
@@ -112,20 +119,29 @@ def _detectar_header(path: Path) -> pd.DataFrame | None:
     return mejor_df
 
 
-def procesar_excel(path: Path, codigos_validos: list[str]) -> tuple[pd.DataFrame | None, dict]:
+def procesar_excel(
+    path: Path,
+    codigos_validos: list[str],
+    mapeo_columnas: dict[str, str] | None = None,
+) -> tuple[pd.DataFrame | None, dict]:
     """Lee un Excel con detección flexible de header y aliases de columnas.
+
+    Args:
+        mapeo_columnas: override de MAPA_RENOMBRES confirmado por el usuario
+            ({col_excel: campo_canonico}). Si None, usa MAPA_RENOMBRES hardcodeado.
 
     Devuelve (df_filtrado_o_None, stats).
     """
     stats = {"total_leido": 0, "aprobados_ce": 0}
+    mapa = mapeo_columnas if mapeo_columnas else MAPA_RENOMBRES
 
-    df = _detectar_header(path)
+    df = _detectar_header(path, mapa_override=mapa)
     if df is None:
         log.error("No se pudo leer %s con ningún header candidato.", path.name)
         return None, stats
 
-    # Renombrar usando aliases
-    df = df.rename(columns=MAPA_RENOMBRES)
+    # Renombrar usando el mapa efectivo
+    df = df.rename(columns=mapa)
     df = df.loc[:, ~df.columns.duplicated()]
 
     # Asegurar que todas las columnas canónicas existan

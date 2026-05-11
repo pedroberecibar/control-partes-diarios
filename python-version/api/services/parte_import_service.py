@@ -99,9 +99,10 @@ class ParteImportService:
 
         self._validar_uses_coverage(df_final, lote_id)
 
+        operario_lookup = _build_operario_lookup(df_aux)
         raws_by_hash = self._crear_raws(lote_id, df_aux, df_final)
         procesados_by_hash = self._crear_procesados(
-            lote_id, contratista_id, df_final, raws_by_hash, uses_lookup
+            lote_id, contratista_id, df_final, raws_by_hash, uses_lookup, operario_lookup
         )
         n_imgs = self._crear_imagenes(df_final, df_img, procesados_by_hash)
 
@@ -189,6 +190,7 @@ class ParteImportService:
         df_final: pd.DataFrame,
         raws_by_hash: dict[str, ParteDiarioRaw],
         uses_lookup: dict[int, float] | None = None,
+        operario_lookup: dict[str, str] | None = None,
     ) -> dict[str, ParteDiarioProcesado]:
         procesados: list[ParteDiarioProcesado] = []
         for _, row in df_final.iterrows():
@@ -200,6 +202,9 @@ class ParteImportService:
             if raw is None:
                 log.warning("Procesado sin raw match (hash=%s) — descartado.", str(id_parte_hash)[:12])
                 continue
+
+            id_externo = self._safe_str(row.get("ID_EXTERNO") or row.get("ID_Externo"))
+            operario_excel = operario_lookup.get(id_externo) if (operario_lookup and id_externo) else None
 
             procesados.append(ParteDiarioProcesado(
                 raw_id=raw.id,
@@ -231,6 +236,9 @@ class ParteImportService:
 
                 # 8 observaciones de la app móvil
                 **self._extraer_observaciones(row),
+
+                # Operario declarado en el Excel (opcional)
+                operario_excel=operario_excel,
 
                 # Auditoría
                 fue_corregido=bool(row.get("FUE_CORREGIDO", False)),
@@ -541,6 +549,21 @@ class ParteImportService:
             n, lote_id, _TRAZA_DUPLICADO_CROSS,
         )
         return df_final
+
+
+def _build_operario_lookup(df_aux: pd.DataFrame) -> dict[str, str]:
+    """Construye {ID_Externo: operario} desde df_aux si la columna Operario existe."""
+    if "ID_Externo" not in df_aux.columns or "Operario" not in df_aux.columns:
+        return {}
+    out: dict[str, str] = {}
+    for _, row in df_aux.iterrows():
+        ext = str(row.get("ID_Externo", "")).strip() or None
+        val = row.get("Operario")
+        if ext and val is not None:
+            s = str(val).strip()
+            if s and s.lower() not in ("nan", "none", ""):
+                out[ext] = s
+    return out
 
 
 def _row_to_jsonable_dict(row: pd.Series | dict) -> dict[str, Any]:

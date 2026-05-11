@@ -93,6 +93,7 @@ export function normalizeParteDetalle(p) {
     nro_medidor_colocado: fmtMedidor(p.nro_medidor_colocado),
     medidor_dec: fmtMedidor(p.nro_medidor_retirado),
     operario: p.operario_nombre || '—',
+    operario_excel: p.operario_excel || null,
     version: p.version,
     cod_epec_sugerido: p.cod_epec_sugerido,
     valor_uses_origen: p.valor_uses_origen,

@@ -57,12 +57,15 @@ MAPA_RENOMBRES: dict[str, str] = {
     # Tipo de trabajo
     "Tipo de trabajo": "TipoTrabajo", "TipoTrabajo": "TipoTrabajo",
     "codTiposTrabajos": "TipoTrabajo",
+    # Operario (opcional — algunas contratistas lo incluyen)
+    "Operario": "Operario", "operario": "Operario", "OPERARIO": "Operario",
+    "Nombre Operario": "Operario", "nombre_operario": "Operario",
 }
 
 COLS_FINAL = [
     "ID_Externo", "Fecha", "Suministro",
     "medidorColocado", "medidorRetirado",
-    "codTiposManoObra", "TipoTrabajo", "ORIGEN_ARCHIVO", "TRAZA_ADAPTER",
+    "codTiposManoObra", "TipoTrabajo", "Operario", "ORIGEN_ARCHIVO", "TRAZA_ADAPTER",
 ]
 
 COLS_LIMPIAR_DECIMALES = [
@@ -135,8 +138,12 @@ def _parsear_fechas_smart(serie: pd.Series) -> pd.Series:
 # Procesamiento por archivo
 # =============================================================================
 
-def procesar_archivo(path: Path) -> tuple[pd.DataFrame | None, dict]:
+def procesar_archivo(
+    path: Path,
+    mapeo_columnas: dict[str, str] | None = None,
+) -> tuple[pd.DataFrame | None, dict]:
     stats = {"leidos": 0, "guardados": 0}
+    mapa = mapeo_columnas if mapeo_columnas else MAPA_RENOMBRES
 
     df = _leer_archivo(path)
     if df is None:
@@ -144,9 +151,9 @@ def procesar_archivo(path: Path) -> tuple[pd.DataFrame | None, dict]:
 
     stats["leidos"] = len(df)
 
-    # Normalización de columnas: trim + renombrado por MAPA_RENOMBRES
+    # Normalización de columnas: trim + renombrado por mapa efectivo
     df.columns = df.columns.str.strip()
-    df = df.rename(columns=MAPA_RENOMBRES)
+    df = df.rename(columns=mapa)
     df = df.loc[:, ~df.columns.duplicated()]
 
     # Asegurar que todas las columnas finales existan (aunque sea como NaN)

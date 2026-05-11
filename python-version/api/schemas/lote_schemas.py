@@ -4,7 +4,7 @@ Definen la validación estricta de los DTOs de entrada y salida.
 """
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 
 # --- Request DTOs ---
@@ -52,3 +52,19 @@ class LoteListResponse(BaseModel):
     """DTO para listados de lotes con paginación."""
     total: int
     items: list[LoteResponse]
+
+
+# --- Preview de columnas (sin persistencia) ---
+
+class CampoCanonicoDTO(BaseModel):
+    nombre: str
+    requerido: bool
+    descripcion: str
+
+
+class PreviewColumnasResponse(BaseModel):
+    """Respuesta del endpoint preview-columnas."""
+    columnas_detectadas: list[str]
+    fila_header: int
+    mapeo_sugerido: dict[str, str]    # {col_excel: campo_canonico}
+    campos_canonicos: list[CampoCanonicoDTO]

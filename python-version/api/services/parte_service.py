@@ -472,6 +472,7 @@ class ParteService:
             nro_medidor_retirado=parte.nro_medidor_retirado,
             nro_medidor_colocado=parte.nro_medidor_colocado,
             operario_nombre=dims.operario(parte.usr_id),
+            operario_excel=parte.operario_excel,
             ord_nro=parte.ord_nro,
             cod_epec=parte.cod_epec,
             id_estado=parte.id_estado,

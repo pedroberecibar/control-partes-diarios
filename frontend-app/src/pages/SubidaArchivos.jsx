@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { ProgressBar } from '../components/ProgressBar';
-import { crearLote, getLote } from '../api/lotesApi';
+import { crearLote, getLote, previewColumnas } from '../api/lotesApi';
 
 // Temporary mapping — must match seeded contratista IDs in the DB.
 // If they differ, update these values after checking `SELECT id, nombre FROM contratistas`.
@@ -17,15 +17,19 @@ const PREVIEW_ROWS = [
 ];
 
 export function SubidaArchivos({ onBack }) {
-  const [dragOver, setDragOver]           = useState(false);
-  const [files, setFiles]                 = useState([]);
-  const [contratista, setContratista]     = useState('CONECTAR');
-  const [step, setStep]                   = useState('drop'); // drop | preview | uploading | result | error
-  const [uploadResult, setUploadResult]   = useState(null);
-  const [uploadError, setUploadError]     = useState(null);
-  const [errorPayload, setErrorPayload]   = useState(null); // { code, lote_existente_id?, ... }
-  const [overlapWarn, setOverlapWarn]     = useState(null); // { overlap_pct, n_existentes, n_total }
-  const [progressLote, setProgressLote]   = useState(null); // último snapshot del lote para barra
+  const [dragOver, setDragOver]               = useState(false);
+  const [files, setFiles]                     = useState([]);
+  const [contratista, setContratista]         = useState('CONECTAR');
+  const [step, setStep]                       = useState('drop'); // drop | preview | mapping | uploading | result | error
+  const [uploadResult, setUploadResult]       = useState(null);
+  const [uploadError, setUploadError]         = useState(null);
+  const [errorPayload, setErrorPayload]       = useState(null); // { code, lote_existente_id?, ... }
+  const [overlapWarn, setOverlapWarn]         = useState(null); // { overlap_pct, n_existentes, n_total }
+  const [progressLote, setProgressLote]       = useState(null); // último snapshot del lote para barra
+  // Mapeo de columnas
+  const [columnasPreview, setColumnasPreview] = useState(null);  // respuesta de preview-columnas
+  const [mapeoSel, setMapeoSel]               = useState({});    // {campo_canonico: col_excel}
+  const [loadingPreview, setLoadingPreview]   = useState(false);
   const fileInputRef = useRef();
   const pollRef = useRef(null);
 
@@ -40,7 +44,28 @@ export function SubidaArchivos({ onBack }) {
     if (chosen.length) { setFiles(chosen); setStep('preview'); }
   }
 
-  async function doUpload({ force = false } = {}) {
+  async function goToMapping() {
+    if (!files.length) return;
+    setLoadingPreview(true);
+    try {
+      const resultado = await previewColumnas(files[0], CONTRATISTA_IDS[contratista] ?? 1);
+      setColumnasPreview(resultado);
+      // Pre-seleccionar el mapeo sugerido: invertir {col_excel: canonico} → {canonico: col_excel}
+      const presel = {};
+      for (const [col, canonico] of Object.entries(resultado.mapeo_sugerido || {})) {
+        if (!presel[canonico]) presel[canonico] = col;
+      }
+      setMapeoSel(presel);
+      setStep('mapping');
+    } catch (err) {
+      setUploadError(err.message || 'Error al detectar columnas.');
+      setStep('error');
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  async function doUpload({ force = false, mapeo = null } = {}) {
     if (!files.length) return;
     setStep('uploading');
     setUploadResult(null);
@@ -53,7 +78,7 @@ export function SubidaArchivos({ onBack }) {
         files[0],
         CONTRATISTA_IDS[contratista] ?? 1,
         USUARIO_ID_DEFAULT,
-        { force },
+        { force, mapeo },
       );
       setUploadResult(lote);
       setProgressLote(lote);
@@ -61,7 +86,7 @@ export function SubidaArchivos({ onBack }) {
     } catch (err) {
       if (err.code === 'OVERLAP_WARN') {
         setOverlapWarn(err.payload || null);
-        setStep('preview'); // volver a preview con el modal abierto encima
+        setStep('mapping'); // volver a mapping con el modal abierto encima
       } else {
         setErrorPayload(err.payload || null);
         setUploadError(err.message || 'Error desconocido al subir el archivo.');
@@ -70,8 +95,17 @@ export function SubidaArchivos({ onBack }) {
     }
   }
 
-  const handleUpload = () => doUpload({ force: false });
-  const handleUploadForce = () => doUpload({ force: true });
+  function buildMapeoParaEnviar() {
+    // Invierte mapeoSel {canonico: col_excel} → {col_excel: canonico}
+    const out = {};
+    for (const [canonico, col] of Object.entries(mapeoSel)) {
+      if (col && col !== '__none__') out[col] = canonico;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  const handleUpload = () => doUpload({ force: false, mapeo: buildMapeoParaEnviar() });
+  const handleUploadForce = () => doUpload({ force: true, mapeo: buildMapeoParaEnviar() });
 
   // Polling de progreso del lote recién creado mientras el worker procesa.
   useEffect(() => {
@@ -94,6 +128,8 @@ export function SubidaArchivos({ onBack }) {
     setErrorPayload(null);
     setOverlapWarn(null);
     setProgressLote(null);
+    setColumnasPreview(null);
+    setMapeoSel({});
     setStep('drop');
   }
 
@@ -263,8 +299,91 @@ export function SubidaArchivos({ onBack }) {
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button style={sS.btnSecondary} onClick={resetFlow}>Cancelar</button>
-            <button style={sS.btnPrimary} onClick={handleUpload}>
-              <Icon name="upload" size={14} /> Subir al servidor
+            <button style={sS.btnPrimary} onClick={goToMapping} disabled={loadingPreview}>
+              {loadingPreview
+                ? <><Icon name="loader" size={13} /> Detectando columnas…</>
+                : <><Icon name="arrow-right" size={14} /> Siguiente: Mapeo de columnas</>}
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── Step: mapeo de columnas ──────────────────────────── */}
+      {step === 'mapping' && columnasPreview && (
+        <>
+          <div style={sS.card}>
+            <div style={sS.cardHeader}>
+              <Icon name="sliders" size={14} color="#6b7772" />
+              <span style={sS.cardTitle}>Mapeo de columnas — {files[0]?.name}</span>
+              <span style={{ fontSize: 10.5, color: '#8f9c97' }}>Confirmar o ajustar</span>
+            </div>
+            <div style={sS.cardBody}>
+              <p style={{ fontSize: 12, color: '#6b7772', marginBottom: 12, marginTop: 0 }}>
+                Se detectaron <strong>{columnasPreview.columnas_detectadas.length}</strong> columnas en el archivo.
+                Asigná cada campo del sistema a la columna que le corresponde.
+              </p>
+              <table style={{ ...sS.table, marginBottom: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={sS.th}>Campo del sistema</th>
+                    <th style={sS.th}>Columna del archivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {columnasPreview.campos_canonicos.map((campo) => {
+                    const requerido = campo.requerido;
+                    const valorSel = mapeoSel[campo.nombre] || '__none__';
+                    const sinMapear = requerido && valorSel === '__none__';
+                    return (
+                      <tr key={campo.nombre}>
+                        <td style={{ ...sS.td, fontFamily: 'inherit' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontWeight: 600, color: '#2f3733' }}>{campo.nombre}</span>
+                            {requerido
+                              ? <span style={{ fontSize: 9, padding: '1px 5px', background: '#c0392b', color: 'white', borderRadius: 3, fontWeight: 700, letterSpacing: '0.05em' }}>REQ</span>
+                              : <span style={{ fontSize: 9, padding: '1px 5px', background: '#d5ddd9', color: '#6b7772', borderRadius: 3, fontWeight: 600 }}>OPT</span>}
+                          </div>
+                          <div style={{ fontSize: 10.5, color: '#8f9c97', marginTop: 1 }}>{campo.descripcion}</div>
+                        </td>
+                        <td style={sS.td}>
+                          <select
+                            value={valorSel}
+                            onChange={(e) => setMapeoSel((prev) => ({ ...prev, [campo.nombre]: e.target.value }))}
+                            style={{
+                              width: '100%', padding: '5px 8px', border: `1px solid ${sinMapear ? '#c0392b' : '#d5ddd9'}`,
+                              borderRadius: 4, fontSize: 12, background: sinMapear ? '#fff5f5' : 'white', color: '#2f3733',
+                            }}
+                          >
+                            <option value="__none__">— No mapear —</option>
+                            {columnasPreview.columnas_detectadas.map((col) => (
+                              <option key={col} value={col}>{col}</option>
+                            ))}
+                          </select>
+                          {sinMapear && (
+                            <div style={{ fontSize: 10.5, color: '#c0392b', marginTop: 2 }}>Campo requerido — debe estar mapeado</div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button style={sS.btnSecondary} onClick={() => setStep('preview')}>
+              <Icon name="arrow-left" size={13} /> Volver
+            </button>
+            <button
+              style={{
+                ...sS.btnPrimary,
+                opacity: columnasPreview.campos_canonicos.filter((c) => c.requerido && (!mapeoSel[c.nombre] || mapeoSel[c.nombre] === '__none__')).length ? 0.5 : 1,
+                cursor: columnasPreview.campos_canonicos.filter((c) => c.requerido && (!mapeoSel[c.nombre] || mapeoSel[c.nombre] === '__none__')).length ? 'not-allowed' : 'pointer',
+              }}
+              disabled={columnasPreview.campos_canonicos.some((c) => c.requerido && (!mapeoSel[c.nombre] || mapeoSel[c.nombre] === '__none__'))}
+              onClick={handleUpload}
+            >
+              <Icon name="upload" size={14} /> Procesar lote
             </button>
           </div>
         </>

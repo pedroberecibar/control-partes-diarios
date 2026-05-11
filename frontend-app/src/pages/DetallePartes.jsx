@@ -581,7 +581,8 @@ export function DetallePartes({ parte, onBack }) {
                 <div style={dS.rawGrid}>
                   {[
                     ['Suministro',        p.suministro],
-                    ['Operario',          p.operario],
+                    ['Operario (dim)',    p.operario],
+                    ['Operario (Excel)',  p.operario_excel || '—'],
                     ['Fecha Parte',       p.fecha],
                     ['Contratista',       p.contratista],
                     ['Medidor Retirado',  p.nro_medidor_retirado || p.medidor_dec || '—'],

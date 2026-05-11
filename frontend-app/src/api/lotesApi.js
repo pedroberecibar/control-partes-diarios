@@ -9,6 +9,21 @@ export const reprocesarLote = (id) =>
   apiFetch(`/api/v1/lotes/${id}/reprocesar`, { method: 'POST' });
 
 /**
+ * Llama al endpoint preview-columnas para detectar columnas del archivo.
+ * Sin efecto en DB — solo lectura del encabezado del Excel/CSV.
+ */
+export function previewColumnas(archivo, contratistaId) {
+  const fd = new FormData();
+  fd.append('archivo', archivo);
+  const url = `${BASE_URL}/api/v1/lotes/preview-columnas?contratista_id=${contratistaId}`;
+  return fetch(url, { method: 'POST', body: fd }).then(async (r) => {
+    if (r.ok) return r.json();
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body?.detail || `HTTP ${r.status}`);
+  });
+}
+
+/**
  * Sube un archivo y crea un lote.
  *
  * Errores 409 conocidos (la API devuelve `detail` como objeto):
@@ -18,10 +33,17 @@ export const reprocesarLote = (id) =>
  *
  * Esos errores se rethrowean con `err.code` y `err.payload` poblados para que
  * el caller pueda decidir cómo reaccionar (mostrar modal, error duro, etc.).
+ *
+ * @param {File}   archivo
+ * @param {number} contratistaId
+ * @param {number} subidoPor
+ * @param {{ force?: boolean, mapeo?: Record<string,string>|null }} opts
+ *   mapeo: {col_excel: campo_canonico} — null = usar MAPA_RENOMBRES del adapter.
  */
-export function crearLote(archivo, contratistaId, subidoPor, { force = false } = {}) {
+export function crearLote(archivo, contratistaId, subidoPor, { force = false, mapeo = null } = {}) {
   const fd = new FormData();
   fd.append('archivo', archivo);
+  if (mapeo) fd.append('mapeo_columnas', JSON.stringify(mapeo));
   const params = new URLSearchParams({
     contratista_id: String(contratistaId),
     subido_por: String(subidoPor),

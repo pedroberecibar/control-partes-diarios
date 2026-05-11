@@ -111,6 +111,7 @@ class LoteService:
         contratista_id: int,
         subido_por: int,
         force: bool = False,
+        mapeo_columnas: str | None = None,
     ) -> LoteArchivo:
         """Crea un nuevo lote aplicando antiduplicidad de tres capas.
 
@@ -150,6 +151,7 @@ class LoteService:
             subido_por=subido_por,
             paso_actual="RECIBIENDO",
             progreso_pct=0,
+            mapeo_columnas=mapeo_columnas,
         )
         self.db.add(lote)
         try:
@@ -170,8 +172,15 @@ class LoteService:
         self.db.refresh(lote)
 
         # ---------- Capa 2 — contenido normalizado ----------
+        mapeo_dict = None
+        if mapeo_columnas:
+            import json as _json
+            try:
+                mapeo_dict = _json.loads(mapeo_columnas)
+            except Exception:
+                pass
         try:
-            df_aux = ejecutar_adapter(Path(ruta_archivo), contratista.nombre)
+            df_aux = ejecutar_adapter(Path(ruta_archivo), contratista.nombre, mapeo_columnas=mapeo_dict)
         except Exception as e:
             # Si el adapter explota, dejamos pasar el lote (el worker volverá a
             # intentar y rechazará con detalle_error). Sin contenido parseable

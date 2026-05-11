@@ -83,6 +83,7 @@ class ParteDetalleResponse(BaseModel):
     nro_medidor_retirado: Optional[str] = None
     nro_medidor_colocado: Optional[str] = None
     operario_nombre: Optional[str] = None
+    operario_excel: Optional[str] = None
 
     # Cruces y resultados
     ord_nro: Optional[int] = None

@@ -87,7 +87,14 @@ def procesar_lote_en_background(lote_id: int) -> None:
         db.commit()
 
         try:
-            df_aux = ejecutar_adapter(Path(lote.ruta_archivo), contratista.nombre)
+            mapeo_dict = None
+            if lote.mapeo_columnas:
+                import json as _json
+                try:
+                    mapeo_dict = _json.loads(lote.mapeo_columnas)
+                except Exception:
+                    log.warning("Lote %d — mapeo_columnas no es JSON válido, ignorado.", lote_id)
+            df_aux = ejecutar_adapter(Path(lote.ruta_archivo), contratista.nombre, mapeo_columnas=mapeo_dict)
             if df_aux is None or df_aux.empty:
                 raise ValueError("El archivo resultó vacío después de la limpieza.")
 

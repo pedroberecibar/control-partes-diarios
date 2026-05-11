@@ -2,12 +2,16 @@
 Router para la gestión de Lotes de Archivos.
 Controlador HTTP — delega toda la lógica al LoteService.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, BackgroundTasks
+import json
+import tempfile
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, Query, BackgroundTasks
 from api.services.worker import procesar_lote_en_background
 from sqlalchemy.orm import Session
 
 from api.core.database import get_db
-from api.schemas.lote_schemas import LoteResponse, LoteListResponse
+from api.schemas.lote_schemas import LoteResponse, LoteListResponse, PreviewColumnasResponse
 from api.services.exceptions import (
     DuplicadoBytesError,
     DuplicadoContenidoError,
@@ -16,6 +20,38 @@ from api.services.exceptions import (
 from api.services.lote_service import LoteService
 
 router = APIRouter()
+
+
+@router.post("/preview-columnas", response_model=PreviewColumnasResponse, summary="Detectar columnas del archivo")
+async def preview_columnas(
+    archivo: UploadFile = File(..., description="Archivo Excel (.xlsx / .xls / .csv)"),
+    contratista_id: int = Query(..., description="ID de la contratista"),
+    db: Session = Depends(get_db),
+):
+    """Lee el encabezado del archivo y devuelve columnas detectadas con mapeo sugerido.
+
+    Sin efecto en DB — solo lectura del archivo para inferir el mapeo.
+    """
+    from api.db.models.base_models import Contratista
+    from api.services.columnas_preview_service import detectar_columnas
+
+    contratista = db.query(Contratista).filter(Contratista.id == contratista_id).first()
+    if not contratista:
+        raise HTTPException(status_code=400, detail=f"Contratista con id={contratista_id} no existe.")
+
+    contenido = await archivo.read()
+    suffix = Path(archivo.filename or "file.xlsx").suffix or ".xlsx"
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(contenido)
+        tmp_path = Path(tmp.name)
+
+    try:
+        resultado = detectar_columnas(tmp_path, contratista.nombre)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return PreviewColumnasResponse(**resultado)
 
 
 @router.get("/", response_model=LoteListResponse, summary="Listar lotes")
@@ -46,6 +82,7 @@ async def crear_lote(
     subido_por: int = Query(..., description="ID del usuario que sube"),
     force: bool = Query(False, description="Si True, omite el warning de overlap (Capa 3)"),
     archivo: UploadFile = File(..., description="Archivo Excel (.xlsx / .xls / .csv)"),
+    mapeo_columnas: str | None = Form(None, description='JSON {"col_excel":"campo_canonico",...} o null'),
     db: Session = Depends(get_db),
 ):
     """Sube un archivo Excel y crea un registro de lote con estado RECIBIDO.
@@ -58,6 +95,13 @@ async def crear_lote(
     """
     contenido = await archivo.read()
 
+    # Validar JSON del mapeo si se proveyó
+    if mapeo_columnas:
+        try:
+            json.loads(mapeo_columnas)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="mapeo_columnas no es JSON válido.")
+
     service = LoteService(db)
     try:
         lote = service.crear_lote(
@@ -66,6 +110,7 @@ async def crear_lote(
             contratista_id=contratista_id,
             subido_por=subido_por,
             force=force,
+            mapeo_columnas=mapeo_columnas,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
