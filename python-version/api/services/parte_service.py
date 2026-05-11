@@ -48,6 +48,31 @@ _PIVOT_TO_OBS_FIELD: dict[str, str] = {
 }
 
 
+def _calcular_tipo_discrepancia(
+    parte: "ParteDiarioProcesado",
+    valor_uses_origen: float | None,
+    valor_uses_obs: float | None,
+    diferencia: float | None,
+) -> str:
+    """Replica la lógica np.select de etapa4._calcular_discrepancia para un único parte."""
+    if valor_uses_origen is None:
+        return "Sin Regla Definida"
+    if valor_uses_obs is None:
+        return "Sin Regla para Código Declarado"
+    obs_fields = _PIVOT_TO_OBS_FIELD.values()
+    sin_obs = not any(getattr(parte, f) for f in obs_fields)
+    if sin_obs:
+        return "Sin Observaciones"
+    if parte.cod_epec is not None and parte.cod_epec == parte.cod_epec_sugerido:
+        return "Sin Discrepancia"
+    diff = diferencia or 0.0
+    if diff == 0.0:
+        return "Error Operativo"
+    if diff > 0:
+        return "Sobrevaloración"
+    return "Subvaloración"
+
+
 def _norm_val(v) -> str:
     """Normalize a DB/payload value to a string for change-detection comparison.
 
@@ -379,6 +404,19 @@ class ParteService:
                 ))
                 parte.id_estado = ESTADO_REVISION
                 cambios_realizados.append("id_estado")
+
+        # Si cambió cod_epec, recalcular valor_uses_origen + diferencia + discrepancia.
+        if "cod_epec" in cambios_realizados and parte.cod_epec is not None:
+            from api.services.reglas_service import ReglaService
+            uses_nuevo = ReglaService(self.db).valor_uses_para_cod(parte.cod_epec)
+            if uses_nuevo is not None:
+                parte.valor_uses_origen = uses_nuevo
+                v_obs = parte.valor_uses_obs if parte.valor_uses_obs is not None else 0.0
+                diff = round(uses_nuevo - v_obs, 4)
+                parte.diferencia_uses = diff
+                parte.tipo_discrepancia = _calcular_tipo_discrepancia(
+                    parte, uses_nuevo, parte.valor_uses_obs, diff
+                )
 
         logger.info(
             "Parte id=%d editado: campos=%s, version=%d, usuario=%d",

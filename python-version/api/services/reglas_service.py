@@ -134,6 +134,15 @@ class ReglaService:
         log.info("Regla id=%d desactivada.", regla_id)
         return regla
 
+    def valor_uses_para_cod(self, cod_epec: int) -> float | None:
+        """Devuelve VALOR_USES de la primera regla activa para el cod dado, o None."""
+        row = (
+            self.db.query(ReglaCodEpec.valor_uses)
+            .filter(ReglaCodEpec.cod_epec == cod_epec, ReglaCodEpec.activo == True)
+            .first()
+        )
+        return float(row.valor_uses) if row else None
+
     # ------------------------------------------------------------------
     # CRUD Mapeos
     # ------------------------------------------------------------------
