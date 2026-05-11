@@ -288,6 +288,9 @@ def _rows_fotos(df_fotos: pd.DataFrame) -> list[dict]:
         ord_numero = _to_int(r.get("ORD_NUMERO"))
         if ord_numero is None:
             continue
+        if cleaned is None:
+            log.debug("Sin URL Firebase en OBO_INFO_ADICIONAL (ord=%s pos=%s) — omitida.", ord_numero, pos)
+            continue
         out.append({
             "ord_numero": ord_numero,
             "posicion":   pos,

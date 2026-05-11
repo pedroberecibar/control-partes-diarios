@@ -85,8 +85,14 @@ def buscar_candidatos_local(
     if not acum:
         return {"candidatos": [], "aviso": None}
 
-    # Cargar fotos batch
+    # Cargar fotos batch (solo URL no-nulas de la DB local)
     fotos_map = _cargar_fotos_batch(db, list(acum.keys()))
+
+    # Fallback live Oracle para candidatos sin fotos en la DB local
+    sin_local = [num for num in acum if num not in fotos_map]
+    if sin_local:
+        from api.services.oracle_service import get_fotos_por_ord_numeros
+        fotos_map.update(get_fotos_por_ord_numeros(sin_local))
 
     # Construir lista final con dias_diferencia y fotos
     ref_ts = pd.Timestamp(fecha_ref) if fecha_ref else None
@@ -223,6 +229,8 @@ def _cargar_fotos_batch(db: Session, ord_numeros: list[int]) -> dict[int, dict]:
     )
     out: dict[int, dict] = {}
     for r in rows:
+        if r.url is None:
+            continue
         if r.ord_numero not in out:
             out[r.ord_numero] = _fotos_vacias()
         out[r.ord_numero][f"imagen_{r.posicion}"] = r.url

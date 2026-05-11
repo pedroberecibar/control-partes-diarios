@@ -834,20 +834,28 @@ export function DetallePartes({ parte, onBack }) {
                       No se encontraron ordenativos CE para este suministro/medidores en SIGEC.
                     </div>
                   )}
-                  {oracleCandidatos && oracleCandidatos.map((cand) => {
+                  {oracleCandidatos && (() => {
+                    const parteOrdNroInt = p.ord_nro && p.ord_nro !== '—' ? parseInt(p.ord_nro, 10) : null;
+                    return oracleCandidatos.map((cand) => {
                     const fotoCount = cand.fotos ? Object.values(cand.fotos).filter(Boolean).length : 0;
+                    const isAsociado = parteOrdNroInt != null && parteOrdNroInt === cand.ord_numero;
                     const origenColors = {
                       A:          { bg: '#d4edda', color: '#155a2e' },
                       B_colocado: { bg: '#dbeafe', color: '#1565c0' },
                       B_retirado: { bg: '#e8d5f5', color: '#6a1b9a' },
                     };
                     return (
-                      <div key={cand.ord_numero} style={{ border: '1px solid #eaeeec', borderRadius: 6, marginBottom: 10, padding: '12px 14px', display: 'flex', alignItems: 'flex-start', gap: 14, background: '#fafcfb' }}>
+                      <div key={cand.ord_numero} style={{ border: `1px solid ${isAsociado ? '#a8d9c0' : '#eaeeec'}`, borderLeft: isAsociado ? '3px solid #1d8348' : '1px solid #eaeeec', borderRadius: 6, marginBottom: 10, padding: '12px 14px', display: 'flex', alignItems: 'flex-start', gap: 14, background: isAsociado ? '#f0faf4' : '#fafcfb' }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
                             <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 700, color: '#124e2f' }}>{cand.ord_numero}</span>
                             <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#4a5550', background: '#eaeeec', padding: '2px 8px', borderRadius: 3 }}>{cand.srv_codigo || '—'}</span>
                             <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 3, background: cand.ord_estado === 'CERRADO' ? '#fde8e8' : '#d4edda', color: cand.ord_estado === 'CERRADO' ? '#7a1c1c' : '#155a2e', fontWeight: 600 }}>{cand.ord_estado || '—'}</span>
+                            {isAsociado && (
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 3, background: '#1d8348', color: 'white', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                <Icon name="check-circle" size={10} color="white" /> Asociado
+                              </span>
+                            )}
                             {(cand.origenes || []).map((o) => {
                               const oc = origenColors[o] || { bg: '#f0f3f1', color: '#4a5550' };
                               return <span key={o} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: oc.bg, color: oc.color, fontWeight: 600 }}>{o}</span>;
@@ -886,7 +894,8 @@ export function DetallePartes({ parte, onBack }) {
                         </div>
                       </div>
                     );
-                  })}
+                  });
+                  })()}
                 </div>
               </div>
             </div>
