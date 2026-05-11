@@ -9,6 +9,7 @@ import { DashboardCalidad } from './pages/DashboardCalidad';
 import { DashboardEvolucion } from './pages/DashboardEvolucion';
 import { DashboardMapa } from './pages/DashboardMapa';
 import { DashboardOperarios } from './pages/DashboardOperarios';
+import { DetalleLote } from './pages/DetalleLote';
 import { DetallePartes } from './pages/DetallePartes';
 import { ListaLotes } from './pages/ListaLotes';
 import { MapeoCodigosAdmin } from './pages/MapeoCodigosAdmin';
@@ -41,6 +42,11 @@ export default function App() {
   function handleVerEnBandeja(loteId) {
     setActiveLoteId(loteId);
     setScreen('bandeja');
+  }
+
+  function handleOpenDashboardLote(loteId) {
+    setActiveLoteId(loteId);
+    setScreen('detalle-lote');
   }
 
   function handleOpenDetalle(parte) {
@@ -79,7 +85,8 @@ export default function App() {
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {screen === 'bandeja'    && <BandejaAuditoria onOpenDetalle={handleOpenDetalle} initialLoteId={activeLoteId} />}
           {screen === 'detalle'    && <DetallePartes parte={activeParte} onBack={() => setScreen('bandeja')} />}
-          {screen === 'lotes'      && <ListaLotes onSubir={() => setScreen('subida')} onVerEnBandeja={handleVerEnBandeja} />}
+          {screen === 'lotes'      && <ListaLotes onSubir={() => setScreen('subida')} onVerEnBandeja={handleVerEnBandeja} onOpenDashboard={handleOpenDashboardLote} />}
+          {screen === 'detalle-lote' && <DetalleLote loteId={activeLoteId} onBack={() => setScreen('lotes')} />}
           {screen === 'subida'     && <SubidaArchivos onBack={() => setScreen('lotes')} />}
           {screen === 'calidad'    && <DashboardCalidad />}
           {screen === 'operarios'  && <DashboardOperarios />}

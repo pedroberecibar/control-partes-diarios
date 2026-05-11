@@ -68,3 +68,57 @@ class PreviewColumnasResponse(BaseModel):
     fila_header: int
     mapeo_sugerido: dict[str, str]    # {col_excel: campo_canonico}
     campos_canonicos: list[CampoCanonicoDTO]
+
+
+# --- Dashboard por Lote ---
+
+class TrazaItem(BaseModel):
+    id_traza: int
+    desc_traza: str
+    id_estado: int
+    desc_estado: str
+    count: int
+    pct: float
+
+
+class EpecItem(BaseModel):
+    cod_epec: Optional[int]
+    desc_epec: Optional[str] = None
+    count: int
+    total_uses: float
+    pct_partes: float
+
+
+class DiscrepanciaItem(BaseModel):
+    tipo: str
+    count: int
+    pct: float
+    delta_uses: float
+
+
+class OperarioItem(BaseModel):
+    operario: str
+    n_total: int
+    n_aprobados: int
+    tasa_aprobacion: float
+    total_uses: float
+
+
+class LoteDashboardResponse(BaseModel):
+    lote_id: int
+    total_registros: int
+    n_aprobados: int
+    n_revision: int
+    n_rechazado: int
+    n_fuera_alcance: int
+    efectividad_pct: float
+    aprobados_directo: int
+    aprobados_corregidos: int
+    distribucion_trazas: list[TrazaItem]
+    distribucion_epec: list[EpecItem]
+    total_uses_aprobados: float
+    total_controlados: int
+    distribucion_discrepancias: list[DiscrepanciaItem]
+    delta_uses_sobrevaloracion: float
+    delta_uses_subvaloracion: float
+    por_operario: list[OperarioItem]

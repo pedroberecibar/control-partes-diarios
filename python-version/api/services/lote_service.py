@@ -6,7 +6,7 @@ import logging
 from collections import defaultdict
 from pathlib import Path
 
-from sqlalchemy import func
+from sqlalchemy import func, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -25,6 +25,36 @@ from api.services.parte_dedup_helpers import contar_overlap_business_keys
 from src.config import OVERLAP_WARNING_THRESHOLD
 
 logger = logging.getLogger("api.services.lote")
+
+_TRAZA_NOMBRES: dict[int, str] = {
+    1:  "Original OK",
+    2:  "Corregido Nro EQP Invertidos",
+    3:  "Corregido Nro Medidor",
+    4:  "Corregido Sumi",
+    5:  "Corregido Sumi Nro EQP",
+    6:  "No Corresponde TOR CE",
+    7:  "Sin Orden Asociada",
+    8:  "Error Sumi Sin Nro Medidor",
+    9:  "Error Sumi Y Nro Medidor",
+    10: "Informados con ORD-SUMI aprobado",
+    11: "Otro Origen",
+    12: "Corregido Medidor Vacio",
+    13: "Informado - No Ejecutado",
+    14: "Código de Tarea No Mapeado",
+    15: "Fecha Inválida",
+    16: "Duplicado Exacto en Archivo Origen",
+    17: "Datos Clave Faltantes",
+    18: "Registro Ya Procesado en Lote Anterior",
+    19: "Rescatado por Oracle",
+    20: "Múltiples Candidatos Oracle",
+}
+
+_ESTADO_NOMBRES: dict[int, str] = {
+    1: "Aprobado",
+    2: "Revisión",
+    3: "Rechazado",
+    4: "Fuera Alcance",
+}
 
 
 # Carpeta de uploads — alineada con `BASE_DIR` (python-version/) ya usada en database.py.
@@ -288,6 +318,201 @@ class LoteService:
         self.db.commit()
         self.db.refresh(lote)
         return lote
+
+    def get_lote_dashboard(self, lote_id: int):
+        """Calcula y devuelve el payload analítico completo de un lote para el dashboard de detalle."""
+        from api.db.models.domain_models import ReglaCodEpec
+        from api.schemas.lote_schemas import (
+            LoteDashboardResponse, TrazaItem, EpecItem, DiscrepanciaItem, OperarioItem,
+        )
+
+        lote = self.db.query(LoteArchivo).filter(LoteArchivo.id == lote_id).first()
+        if not lote:
+            return None
+
+        # 1. Distribución por id_estado
+        estado_rows = (
+            self.db.query(
+                ParteDiarioProcesado.id_estado,
+                func.count(ParteDiarioProcesado.id).label("cnt"),
+            )
+            .filter(ParteDiarioProcesado.lote_id == lote_id)
+            .group_by(ParteDiarioProcesado.id_estado)
+            .all()
+        )
+        estado_map = {r.id_estado: r.cnt for r in estado_rows}
+        n_aprobados     = estado_map.get(1, 0)
+        n_revision      = estado_map.get(2, 0)
+        n_rechazado     = estado_map.get(3, 0)
+        n_fuera_alcance = estado_map.get(4, 0)
+        total           = sum(estado_map.values())
+        base_ef         = total - n_fuera_alcance
+        efectividad_pct = round(n_aprobados / base_ef * 100, 1) if base_ef > 0 else 0.0
+
+        # 2. Aprobados directos (traza 1) vs. corregidos algorítmicamente
+        aprobados_directo = (
+            self.db.query(func.count(ParteDiarioProcesado.id))
+            .filter(
+                ParteDiarioProcesado.lote_id == lote_id,
+                ParteDiarioProcesado.id_estado == 1,
+                ParteDiarioProcesado.id_traza == 1,
+            )
+            .scalar() or 0
+        )
+        aprobados_corregidos = n_aprobados - aprobados_directo
+
+        # 3. Distribución por traza
+        traza_rows = (
+            self.db.query(
+                ParteDiarioProcesado.id_traza,
+                ParteDiarioProcesado.id_estado,
+                func.count(ParteDiarioProcesado.id).label("cnt"),
+            )
+            .filter(ParteDiarioProcesado.lote_id == lote_id)
+            .group_by(ParteDiarioProcesado.id_traza, ParteDiarioProcesado.id_estado)
+            .order_by(func.count(ParteDiarioProcesado.id).desc())
+            .all()
+        )
+        distribucion_trazas = [
+            TrazaItem(
+                id_traza=r.id_traza,
+                desc_traza=_TRAZA_NOMBRES.get(r.id_traza, f"Traza {r.id_traza}"),
+                id_estado=r.id_estado,
+                desc_estado=_ESTADO_NOMBRES.get(r.id_estado, f"Estado {r.id_estado}"),
+                count=r.cnt,
+                pct=round(r.cnt / total * 100, 1) if total > 0 else 0.0,
+            )
+            for r in traza_rows
+        ]
+
+        # 4. Distribución por cod_epec (solo aprobados)
+        # Prefetch descripciones de reglas activas
+        desc_rows = (
+            self.db.query(ReglaCodEpec.cod_epec, ReglaCodEpec.descripcion)
+            .filter(ReglaCodEpec.activo.is_(True))
+            .order_by(ReglaCodEpec.cod_epec, ReglaCodEpec.id)
+            .all()
+        )
+        epec_descs: dict[int, str] = {}
+        for dr in desc_rows:
+            if dr.cod_epec not in epec_descs:
+                epec_descs[dr.cod_epec] = dr.descripcion
+
+        epec_rows = (
+            self.db.query(
+                ParteDiarioProcesado.cod_epec,
+                func.count(ParteDiarioProcesado.id).label("cnt"),
+                func.coalesce(func.sum(ParteDiarioProcesado.valor_uses_origen), 0.0).label("total_uses"),
+            )
+            .filter(
+                ParteDiarioProcesado.lote_id == lote_id,
+                ParteDiarioProcesado.id_estado == 1,
+            )
+            .group_by(ParteDiarioProcesado.cod_epec)
+            .order_by(func.coalesce(func.sum(ParteDiarioProcesado.valor_uses_origen), 0.0).desc())
+            .all()
+        )
+        total_uses_aprobados = sum(float(r.total_uses or 0.0) for r in epec_rows)
+        distribucion_epec = [
+            EpecItem(
+                cod_epec=r.cod_epec,
+                desc_epec=epec_descs.get(r.cod_epec) if r.cod_epec is not None else None,
+                count=r.cnt,
+                total_uses=round(float(r.total_uses or 0.0), 4),
+                pct_partes=round(r.cnt / n_aprobados * 100, 1) if n_aprobados > 0 else 0.0,
+            )
+            for r in epec_rows
+        ]
+
+        # 5. Distribución de discrepancias
+        disc_rows = (
+            self.db.query(
+                ParteDiarioProcesado.tipo_discrepancia,
+                func.count(ParteDiarioProcesado.id).label("cnt"),
+                func.coalesce(func.sum(ParteDiarioProcesado.diferencia_uses), 0.0).label("delta_uses"),
+            )
+            .filter(
+                ParteDiarioProcesado.lote_id == lote_id,
+                ParteDiarioProcesado.tipo_discrepancia.isnot(None),
+            )
+            .group_by(ParteDiarioProcesado.tipo_discrepancia)
+            .all()
+        )
+        total_controlados = sum(r.cnt for r in disc_rows)
+        delta_sobrevaloracion = 0.0
+        delta_subvaloracion   = 0.0
+        distribucion_discrepancias = []
+        for r in disc_rows:
+            delta = round(float(r.delta_uses or 0.0), 4)
+            distribucion_discrepancias.append(DiscrepanciaItem(
+                tipo=r.tipo_discrepancia,
+                count=r.cnt,
+                pct=round(r.cnt / total_controlados * 100, 1) if total_controlados > 0 else 0.0,
+                delta_uses=delta,
+            ))
+            if r.tipo_discrepancia == "Sobrevaloración":
+                delta_sobrevaloracion = delta
+            elif r.tipo_discrepancia == "Subvaloración":
+                delta_subvaloracion = abs(delta)
+        distribucion_discrepancias.sort(key=lambda x: x.count, reverse=True)
+
+        # 6. Distribución por operario
+        op_rows = (
+            self.db.query(
+                ParteDiarioProcesado.operario_excel,
+                func.count(ParteDiarioProcesado.id).label("n_total"),
+                func.sum(
+                    case((ParteDiarioProcesado.id_estado == 1, 1), else_=0)
+                ).label("n_aprobados"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (ParteDiarioProcesado.id_estado == 1, ParteDiarioProcesado.valor_uses_origen),
+                            else_=None,
+                        )
+                    ),
+                    0.0,
+                ).label("total_uses"),
+            )
+            .filter(
+                ParteDiarioProcesado.lote_id == lote_id,
+                ParteDiarioProcesado.operario_excel.isnot(None),
+                ParteDiarioProcesado.operario_excel != "",
+            )
+            .group_by(ParteDiarioProcesado.operario_excel)
+            .order_by(func.count(ParteDiarioProcesado.id).desc())
+            .all()
+        )
+        por_operario = [
+            OperarioItem(
+                operario=r.operario_excel,
+                n_total=r.n_total,
+                n_aprobados=r.n_aprobados or 0,
+                tasa_aprobacion=round((r.n_aprobados or 0) / r.n_total * 100, 1) if r.n_total > 0 else 0.0,
+                total_uses=round(float(r.total_uses or 0.0), 4),
+            )
+            for r in op_rows
+        ]
+
+        return LoteDashboardResponse(
+            lote_id=lote_id,
+            total_registros=total,
+            n_aprobados=n_aprobados,
+            n_revision=n_revision,
+            n_rechazado=n_rechazado,
+            n_fuera_alcance=n_fuera_alcance,
+            efectividad_pct=efectividad_pct,
+            aprobados_directo=aprobados_directo,
+            aprobados_corregidos=aprobados_corregidos,
+            distribucion_trazas=distribucion_trazas,
+            distribucion_epec=distribucion_epec,
+            total_uses_aprobados=round(total_uses_aprobados, 4),
+            total_controlados=total_controlados,
+            distribucion_discrepancias=distribucion_discrepancias,
+            delta_uses_sobrevaloracion=delta_sobrevaloracion,
+            delta_uses_subvaloracion=delta_subvaloracion,
+            por_operario=por_operario,
+        )
 
     @staticmethod
     def _persistir_binario(hash_archivo: str, nombre_original: str, contenido: bytes) -> Path:

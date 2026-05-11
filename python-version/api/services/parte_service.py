@@ -461,11 +461,15 @@ class ParteService:
     def _to_detalle_dto(self, parte: ParteDiarioProcesado) -> ParteDetalleResponse:
         contratista_nombre = self._contratistas_por_id([parte]).get(parte.contratista_id)
         imagenes = sorted(parte.imagenes, key=lambda i: i.orden)
+        from api.db.models.base_models import LoteArchivo
+        lote = self.db.query(LoteArchivo.nombre_archivo).filter(LoteArchivo.id == parte.lote_id).first()
+        lote_nombre = lote[0] if lote else None
         return ParteDetalleResponse(
             id=parte.id,
             raw_id=parte.raw_id,
             id_parte_hash=parte.id_parte_hash,
             lote_id=parte.lote_id,
+            lote_nombre=lote_nombre,
             contratista=contratista_nombre,
             suministro=parte.suministro,
             fecha_ejecucion=parte.fecha_ejecucion,

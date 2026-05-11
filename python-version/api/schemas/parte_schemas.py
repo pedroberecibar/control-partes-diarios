@@ -75,6 +75,7 @@ class ParteDetalleResponse(BaseModel):
     raw_id: int
     id_parte_hash: str
     lote_id: int
+    lote_nombre: Optional[str] = None
     contratista: Optional[str] = None
 
     # Datos del parte

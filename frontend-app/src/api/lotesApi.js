@@ -5,6 +5,8 @@ export const getLotes = (skip = 0, limit = 200) =>
 
 export const getLote = (id) => apiFetch(`/api/v1/lotes/${id}`);
 
+export const getLoteDashboard = (id) => apiFetch(`/api/v1/lotes/${id}/dashboard`);
+
 export const reprocesarLote = (id) =>
   apiFetch(`/api/v1/lotes/${id}/reprocesar`, { method: 'POST' });
 

@@ -11,7 +11,7 @@ from api.services.worker import procesar_lote_en_background
 from sqlalchemy.orm import Session
 
 from api.core.database import get_db
-from api.schemas.lote_schemas import LoteResponse, LoteListResponse, PreviewColumnasResponse
+from api.schemas.lote_schemas import LoteResponse, LoteListResponse, LoteDashboardResponse, PreviewColumnasResponse
 from api.services.exceptions import (
     DuplicadoBytesError,
     DuplicadoContenidoError,
@@ -63,6 +63,16 @@ def listar_lotes(
     """Devuelve todos los lotes de archivos subidos, ordenados por fecha descendente."""
     service = LoteService(db)
     return service.listar_lotes(skip=skip, limit=limit)
+
+
+@router.get("/{lote_id}/dashboard", response_model=LoteDashboardResponse, summary="Dashboard analítico de un lote")
+def dashboard_lote(lote_id: int, db: Session = Depends(get_db)):
+    """Devuelve el payload analítico completo del lote: calidad de datos, distribución EPEC y análisis de discrepancias."""
+    service = LoteService(db)
+    data = service.get_lote_dashboard(lote_id)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"Lote con id={lote_id} no encontrado.")
+    return data
 
 
 @router.get("/{lote_id}", response_model=LoteResponse, summary="Detalle de un lote")

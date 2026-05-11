@@ -87,7 +87,7 @@ export function normalizeParteDetalle(p) {
   return {
     ...normalizeParte(p),
     lote_id: p.lote_id,
-    lote: p.lote_id ? `lote-${p.lote_id}` : '',
+    lote: p.lote_nombre || (p.lote_id ? `lote-${p.lote_id}` : ''),
     raw_id: p.raw_id,
     nro_medidor_retirado: fmtMedidor(p.nro_medidor_retirado),
     nro_medidor_colocado: fmtMedidor(p.nro_medidor_colocado),

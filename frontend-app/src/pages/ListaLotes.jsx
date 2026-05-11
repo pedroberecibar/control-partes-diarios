@@ -9,7 +9,7 @@ const ESTADOS_OK         = ['APROBADO'];
 const ESTADOS_PROCESANDO = ['RECIBIDO', 'PROCESANDO'];
 const ESTADOS_ERROR      = ['RECHAZADO'];
 
-export function ListaLotes({ onSubir, onVerEnBandeja }) {
+export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
   const [lotes, setLotes]               = useState(LOTES_DATA);
   const [usingMock, setUsingMock]       = useState(false);
   const [search, setSearch]             = useState('');
@@ -223,8 +223,8 @@ export function ListaLotes({ onSubir, onVerEnBandeja }) {
                     {ESTADOS_OK.includes(lote.estado) ? (
                       <button
                         style={lS.actionBtn}
-                        title="Ver partes en Bandeja"
-                        onClick={() => onVerEnBandeja?.(lote._id)}
+                        title="Ver dashboard del lote"
+                        onClick={() => onOpenDashboard?.(lote._id)}
                         onMouseEnter={(e) => { e.currentTarget.style.background = '#edf5f0'; e.currentTarget.style.color = '#124e2f'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#8f9c97'; }}
                       >

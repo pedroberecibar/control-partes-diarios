@@ -69,17 +69,20 @@ export function Sidebar({ activeScreen, onNav, role, collapsed, onToggle }) {
     <aside style={sS.sidebar}>
       <div style={sS.logoRow}>
         {!collapsed && (
-          <svg height="26" viewBox="0 0 96 26" fill="none" style={sS.logoImg} aria-label="EPEC">
-            <rect width="26" height="26" rx="5" fill="rgba(109,191,151,0.25)" />
-            <text x="13" y="19" fontFamily="'Plus Jakarta Sans',Arial,sans-serif" fontSize="13" fontWeight="800" fill="white" textAnchor="middle">E</text>
-            <text x="34" y="20" fontFamily="'Plus Jakarta Sans',Arial,sans-serif" fontSize="18" fontWeight="800" fill="white" letterSpacing="-0.5">EPEC</text>
-          </svg>
+          <img 
+            src={`${import.meta.env.BASE_URL}assets/epec-logo-white.png`}
+            alt="EPEC" 
+            style={{ height: 26, display: 'block', flexShrink: 0 }} 
+          />
         )}
         {collapsed && (
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-label="EPEC">
-            <rect width="28" height="28" rx="5" fill="rgba(109,191,151,0.25)" />
-            <text x="14" y="20" fontFamily="'Plus Jakarta Sans',Arial,sans-serif" fontSize="14" fontWeight="800" fill="white" textAnchor="middle">E</text>
-          </svg>
+          <div style={{ width: 28, height: 28, overflow: 'hidden', borderRadius: 5 }}>
+            <img 
+              src={`${import.meta.env.BASE_URL}assets/epec-logo-white.png`}
+              alt="EPEC" 
+              style={{ height: 28, display: 'block', maxWidth: 'none', objectFit: 'cover', objectPosition: 'left center' }} 
+            />
+          </div>
         )}
         {!collapsed && (
           <button style={sS.collapseBtn} onClick={onToggle} title="Contraer">
