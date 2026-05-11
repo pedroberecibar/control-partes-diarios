@@ -209,6 +209,12 @@ export function DetallePartes({ parte, onBack }) {
     return () => { cancelled = true; };
   }, [p.id, p.id_estado]);
 
+  // Auto-load candidatos Oracle cuando el parte tiene traza "Múltiples Candidatos Oracle" (id_traza=20)
+  useEffect(() => {
+    if (typeof p.id !== 'number' || p.id_traza !== 20) return;
+    handleConsultarOracle();
+  }, [p.id, p.id_traza]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Load bitácora when switching to that tab (only if real parte)
   useEffect(() => {
     if (tab !== 'bitacora') return;
@@ -797,6 +803,12 @@ export function DetallePartes({ parte, onBack }) {
                   </button>
                 </div>
                 <div style={{ padding: '12px 16px' }}>
+                  {p.id_traza === 20 && (
+                    <div style={{ marginBottom: 10, padding: '10px 12px', background: '#fff3cd', border: '1px solid #f0d080', borderRadius: 4, fontSize: 12, color: '#7a4a00', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <Icon name="alert-circle" size={14} color="#e6910a" />
+                      <span><strong>Requiere desambiguación.</strong> Este parte fue clasificado con múltiples ordenativos candidatos. Revisá la lista y asociá el correcto para resolverlo.</span>
+                    </div>
+                  )}
                   {asociarSuccess && (
                     <div style={{ marginBottom: 10, padding: '10px 12px', background: '#d4edda', border: '1px solid #a8d9c0', borderRadius: 4, fontSize: 12, color: '#155a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Icon name="check-circle" size={14} color="#1d8348" />
