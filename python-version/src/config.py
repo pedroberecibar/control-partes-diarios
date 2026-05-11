@@ -43,6 +43,17 @@ LISTA_CONTRATISTAS = ["CONECTAR", "COOPLYF"]
 DIAS_TOLERANCIA    = 15
 VALOR_USES_COD_11  = 0.0100
 
+# Auto-rescate vía DB local sincronizada desde Oracle SIGEC (CE + PROTELEM).
+# Ventana de tolerancia para considerar un candidato como "match cercano":
+RESCATE_DIAS_TOLERANCIA          = 7
+# Fecha de corte del bootstrap del sync. Formato DD/MM/YYYY para coincidir con TO_DATE de la query Oracle.
+RESCATE_FECHA_INICIO_BOOTSTRAP   = "31/05/2025"
+
+# Antiduplicidad — Capa 3 (warning blando por overlap de partes).
+# Si la fracción de partes del nuevo lote que ya existen en lotes previos
+# supera este umbral, el endpoint devuelve 409 OVERLAP_WARN y exige `force=true`.
+OVERLAP_WARNING_THRESHOLD        = 0.5
+
 # Trazas — única fuente de verdad (mover de ajuste aquí se propaga al pipeline)
 TRAZAS_OK = [
     "Original OK",

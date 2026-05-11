@@ -34,8 +34,16 @@ class LoteResponse(BaseModel):
     contratista_nombre: Optional[str] = None
     estado: str
     subido_por: int
+    usuario_nombre: Optional[str] = None
     fecha_subida: datetime
     detalle_error: Optional[str] = None
+    paso_actual: Optional[str] = None
+    progreso_pct: int = 0
+    total_filas: int = 0
+    n_aprobados: int = 0
+    n_revision: int = 0
+    n_rechazado: int = 0
+    n_fuera_alcance: int = 0
 
     model_config = {"from_attributes": True}
 

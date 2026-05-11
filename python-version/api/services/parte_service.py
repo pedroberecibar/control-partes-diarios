@@ -35,6 +35,31 @@ from api.services import dimensiones_service as dims
 
 logger = logging.getLogger("api.services.parte")
 
+# Pivot column → model field mapping (mirrors _OBS_MAPPING in parte_import_service).
+_PIVOT_TO_OBS_FIELD: dict[str, str] = {
+    "GABINETE":                     "obs_gabinete",
+    "SUBTERRANEO":                  "obs_subterraneo",
+    "ALTURA":                       "obs_altura",
+    "AEREO":                        "obs_aereo",
+    "EQUIPO_MEDICION_REEMPLAZADO":  "obs_equipo_medicion_reemplazado",
+    "ACOMETIDA_REALIZADA":          "obs_acometida_realizada",
+    "TAPA_REEMPLAZADA":             "obs_tapa_reemplazada",
+    "EQUIPO_DE_MEDICION_INSTALADO": "obs_equipo_medicion_instalado",
+}
+
+
+def _norm_val(v) -> str:
+    """Normalize a DB/payload value to a string for change-detection comparison.
+
+    Strips trailing '.0' so that float 100.0 and int 100 compare equal.
+    """
+    if v is None:
+        return ""
+    s = str(v)
+    if s.endswith(".0") and s[:-2].lstrip("-").isdigit():
+        return s[:-2]
+    return s
+
 
 class ParteService:
     """Servicio de consulta y edición de partes procesados."""
@@ -176,12 +201,23 @@ class ParteService:
 
         Prioriza las imágenes y los campos esenciales (suministro, medidores,
         operario, observaciones). No incluye el `metricas_analitica` ni la auditoría.
+
+        Fallback de imágenes: si el parte no tiene filas en `parte_imagenes` pero
+        tiene `ord_nro`, consulta Oracle para obtener las fotos del ordenativo.
         """
         parte = self.obtener_parte(parte_id)
         if parte is None:
             return None
 
-        imagenes = sorted(parte.imagenes, key=lambda i: i.orden)
+        if parte.imagenes:
+            imagenes_dto = [
+                ParteImagenDTO(orden=i.orden, url=i.url)
+                for i in sorted(parte.imagenes, key=lambda i: i.orden)
+            ]
+        elif parte.ord_nro:
+            imagenes_dto = self._fotos_oracle_visor(parte.ord_nro)
+        else:
+            imagenes_dto = []
 
         return ParteVisorDTO(
             id=parte.id,
@@ -191,9 +227,7 @@ class ParteService:
             operario_nombre=dims.operario(parte.usr_id),
             nro_medidor_retirado=parte.nro_medidor_retirado,
             nro_medidor_colocado=parte.nro_medidor_colocado,
-            imagenes=[
-                ParteImagenDTO(orden=i.orden, url=i.url) for i in imagenes
-            ],
+            imagenes=imagenes_dto,
             observaciones_app=ObservacionesAppDTO(
                 gabinete=parte.obs_gabinete,
                 subterraneo=parte.obs_subterraneo,
@@ -205,6 +239,43 @@ class ParteService:
                 equipo_medicion_instalado=parte.obs_equipo_medicion_instalado,
             ),
         )
+
+    def _fotos_oracle_visor(self, ord_nro: int) -> list[ParteImagenDTO]:
+        """Fotos del ordenativo para el visor.
+
+        Lee primero la DB local (`OrdenativoOracleFoto`, poblada por
+        `oracle_sync_service`). Si no hay registros — porque el ORD_NRO precede
+        la ventana de bootstrap o el sync nunca se corrió — cae a Oracle live.
+        """
+        local = self._fotos_locales(ord_nro)
+        if local:
+            return local
+        try:
+            from api.services.oracle_service import get_fotos_por_ord_numeros
+            fotos_map = get_fotos_por_ord_numeros([ord_nro])
+            fotos = fotos_map.get(ord_nro, {})
+            return [
+                ParteImagenDTO(orden=i, url=fotos[f"imagen_{i}"])
+                for i in range(1, 6)
+                if fotos.get(f"imagen_{i}")
+            ]
+        except Exception:
+            logger.warning("Fallback Oracle live para visor falló (ord_nro=%s)", ord_nro)
+            return []
+
+    def _fotos_locales(self, ord_nro: int) -> list[ParteImagenDTO]:
+        """Lee fotos del ordenativo desde la DB local sincronizada."""
+        from api.db.models.domain_models import OrdenativoOracleFoto
+        rows = (
+            self.db.query(OrdenativoOracleFoto)
+            .filter(OrdenativoOracleFoto.ord_numero == ord_nro)
+            .all()
+        )
+        return [
+            ParteImagenDTO(orden=r.posicion, url=r.url)
+            for r in sorted(rows, key=lambda r: r.posicion)
+            if r.url
+        ]
 
     # ------------------------------------------------------------------
     # Edición — Optimistic Locking + auditoría
@@ -231,12 +302,17 @@ class ParteService:
         nueva_version = parte.version + 1
         cambios_realizados: list[str] = []
 
+        # Capturamos id_traza/id_estado ANTES del bucle para distinguir reclasificación
+        # automática de cambios explícitos del auditor.
+        id_traza_previo  = parte.id_traza
+        id_estado_previo = parte.id_estado
+
         for campo in self.CAMPOS_EDITABLES:
             nuevo_valor = getattr(payload, campo, None)
             if nuevo_valor is None:
                 continue  # NULL = no tocar — política decidida en bug report 2026-04-28
             valor_anterior = getattr(parte, campo)
-            if str(valor_anterior) == str(nuevo_valor):
+            if _norm_val(valor_anterior) == _norm_val(nuevo_valor):
                 continue
 
             self.db.add(AuditoriaCambio(
@@ -257,8 +333,53 @@ class ParteService:
         parte.version = nueva_version
         parte.fue_corregido = True
 
-        # TODO: re-ejecutar reglas de negocio (recalcular USES, Hamming, cruces) cuando
-        # se integre el motor analítico al flujo de edición.
+        # Si obs_* están vacías y hay ORD_NRO, poblar desde pivot (partes que llegaron
+        # como "En Revisión" y no fueron procesados por Etapa 4 en el import original).
+        obs_vacias = not any(
+            getattr(parte, f) for f in _PIVOT_TO_OBS_FIELD.values()
+        )
+        if obs_vacias and parte.ord_nro:
+            self._poblar_obs_desde_pivot(parte, parte.ord_nro)
+
+        # Reclasificación automática: si el parte estaba en "Sin Orden Asociada" (7) o
+        # "Múltiples Candidatos Oracle" (20) y el auditor le asignó un ord_nro,
+        # pasar a "Rescatado por Oracle" (19) en estado Revisión (2). Solo aplica si
+        # el auditor NO cambió id_traza explícitamente en este mismo payload.
+        TRAZA_RESCATADO   = 19
+        ESTADO_REVISION   = 2
+        TRAZAS_RESCATABLES = (7, 20)
+        if (
+            "ord_nro" in cambios_realizados
+            and id_traza_previo in TRAZAS_RESCATABLES
+            and parte.id_traza in TRAZAS_RESCATABLES  # auditor no la cambió manualmente
+            and parte.ord_nro is not None
+        ):
+            motivo_auto = "Auto-reclasificación tras asignación de ord_nro"
+            if parte.id_traza != TRAZA_RESCATADO:
+                self.db.add(AuditoriaCambio(
+                    parte_procesado_id=parte_id,
+                    usuario_id=payload.usuario_id,
+                    campo_modificado="id_traza",
+                    valor_anterior=str(parte.id_traza),
+                    valor_nuevo=str(TRAZA_RESCATADO),
+                    motivo=motivo_auto,
+                    version_resultante=nueva_version,
+                ))
+                parte.id_traza = TRAZA_RESCATADO
+                cambios_realizados.append("id_traza")
+            if parte.id_estado != ESTADO_REVISION and id_estado_previo == parte.id_estado:
+                self.db.add(AuditoriaCambio(
+                    parte_procesado_id=parte_id,
+                    usuario_id=payload.usuario_id,
+                    campo_modificado="id_estado",
+                    valor_anterior=str(parte.id_estado),
+                    valor_nuevo=str(ESTADO_REVISION),
+                    motivo=motivo_auto,
+                    version_resultante=nueva_version,
+                ))
+                parte.id_estado = ESTADO_REVISION
+                cambios_realizados.append("id_estado")
+
         logger.info(
             "Parte id=%d editado: campos=%s, version=%d, usuario=%d",
             parte_id, cambios_realizados, nueva_version, payload.usuario_id,
@@ -341,6 +462,31 @@ class ParteService:
             created_at=parte.created_at,
             updated_at=parte.updated_at,
         )
+
+    def _poblar_obs_desde_pivot(self, parte: ParteDiarioProcesado, ord_nro: int) -> None:
+        """Busca observaciones en pivot_resul_app_movil y las escribe en parte.obs_*.
+
+        Solo se llama cuando obs_* están todos en False (partes procesados antes de
+        Etapa 4 o partes en Revisión que no pasaron por el filtro Aprobado de E4).
+        Falla silenciosa si el pivot no existe o no tiene el ORD_NRO.
+        """
+        try:
+            import pandas as pd
+            from src import io_lakehouse as io
+
+            cols = ["ORD_NUMERO"] + list(_PIVOT_TO_OBS_FIELD.keys())
+            df = io.read_table("pivot_resul_app_movil", capa="seed", columns=cols)
+            match = df[df["ORD_NUMERO"] == ord_nro]
+            if match.empty:
+                logger.info("pivot_resul_app_movil: sin fila para ord_nro=%d", ord_nro)
+                return
+            row = match.iloc[0]
+            for col_pivot, field in _PIVOT_TO_OBS_FIELD.items():
+                val = row.get(col_pivot)
+                setattr(parte, field, bool(val) if pd.notna(val) else False)
+            logger.info("Obs pobladas desde pivot para ord_nro=%d", ord_nro)
+        except Exception:
+            logger.warning("_poblar_obs_desde_pivot falló (ord_nro=%s)", ord_nro, exc_info=True)
 
     def _contratistas_por_id(
         self, partes: Iterable[ParteDiarioProcesado]

@@ -11,6 +11,7 @@ class AuditoriaResponse(BaseModel):
     id: int
     parte_procesado_id: int
     usuario_id: int
+    usuario_nombre: Optional[str] = None
     campo_modificado: str
     valor_anterior: Optional[str] = None
     valor_nuevo: Optional[str] = None

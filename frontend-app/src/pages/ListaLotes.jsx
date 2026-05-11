@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon, LOTE_ESTADO_CONFIG, StatusChip } from '../components/Icon';
+import { ProgressBar } from '../components/ProgressBar';
 import { getLotes, reprocesarLote } from '../api/lotesApi';
 import { normalizeLote } from '../api/normalizers';
 import { LOTES_DATA } from '../data/lotesMock';
 
-const ESTADOS_OK         = ['OK', 'PROCESADO_OK'];
-const ESTADOS_PROCESANDO = ['RECIBIDO', 'VALIDANDO', 'PROCESANDO', 'EN_CORE', 'EN_OBS'];
-const ESTADOS_ERROR      = ['RECHAZADO_SINTAXIS', 'ERROR'];
+const ESTADOS_OK         = ['APROBADO'];
+const ESTADOS_PROCESANDO = ['RECIBIDO', 'PROCESANDO'];
+const ESTADOS_ERROR      = ['RECHAZADO'];
 
 export function ListaLotes({ onSubir, onVerEnBandeja }) {
   const [lotes, setLotes]               = useState(LOTES_DATA);
@@ -83,6 +84,7 @@ export function ListaLotes({ onSubir, onVerEnBandeja }) {
     kpiValue: { fontSize: 22, fontWeight: 700, color: '#111614', lineHeight: 1.1 },
     kpiSub: { fontSize: 11, color: '#8f9c97', marginTop: 3 },
     tableCard: { background: 'white', border: '1px solid #eaeeec', borderRadius: 6, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
+    tableScroll: { overflowX: 'auto' },
     toolbar: { padding: '10px 16px', borderBottom: '1px solid #eaeeec', display: 'flex', alignItems: 'center', gap: 10 },
     searchWrap: { display: 'flex', alignItems: 'center', gap: 7, background: '#f5f7f6', border: '1px solid #eaeeec', borderRadius: 4, padding: '5px 10px', width: 240 },
     searchInput: { border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#111614', width: '100%' },
@@ -99,10 +101,10 @@ export function ListaLotes({ onSubir, onVerEnBandeja }) {
   };
 
   const kpis = [
-    { label: 'Total Lotes (mes)', value: lotes.length, sub: 'todos los estados' },
-    { label: 'Lotes OK',          value: lotes.filter((l) => ESTADOS_OK.includes(l.estado)).length,         sub: 'procesados correctamente', color: '#155a2e' },
-    { label: 'En Proceso',        value: lotes.filter((l) => ESTADOS_PROCESANDO.includes(l.estado)).length, sub: 'pendientes de completar',   color: '#7a4a00' },
-    { label: 'Con Errores',       value: lotes.filter((l) => ESTADOS_ERROR.includes(l.estado)).length,      sub: 'requieren atención',        color: '#7a1c1c' },
+    { label: 'Total Lotes',  value: lotes.length,                                                                    sub: 'todos los estados' },
+    { label: 'Lotes OK',     value: lotes.filter((l) => ESTADOS_OK.includes(l.estado)).length,                       sub: 'procesados correctamente', color: '#155a2e' },
+    { label: 'En Proceso',   value: lotes.filter((l) => ESTADOS_PROCESANDO.includes(l.estado)).length,               sub: 'pendientes de completar',  color: '#7a4a00' },
+    { label: 'Con Errores',  value: lotes.filter((l) => ESTADOS_ERROR.includes(l.estado)).length,                    sub: 'requieren atención',       color: '#7a1c1c' },
   ];
 
   return (
@@ -159,10 +161,11 @@ export function ListaLotes({ onSubir, onVerEnBandeja }) {
           <div style={{ flex: 1 }} />
           <button style={lS.btn}><Icon name="download" size={13} /> Exportar</button>
         </div>
+        <div style={lS.tableScroll}>
         <table style={lS.table}>
           <thead>
             <tr>
-              {['ID Lote', 'Archivo', 'Contratista', 'Subido por', 'Fecha', 'Estado', 'Filas leídas', 'OK', 'Observ.', 'Errores', 'Acciones'].map((h) => (
+              {['Archivo', 'Contratista', 'Subido por', 'Fecha', 'Estado', 'Filas leídas', 'Aprobados', 'Revisión', 'Rechazado', 'Fuera alcance', 'Acciones'].map((h) => (
                 <th key={h} style={lS.th}>{h}</th>
               ))}
             </tr>
@@ -178,7 +181,6 @@ export function ListaLotes({ onSubir, onVerEnBandeja }) {
                   onMouseEnter={(e) => (e.currentTarget.style.background = '#f5f7f6')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = baseBg)}
                 >
-                  <td style={{ ...lS.td, ...lS.mono, color: '#124e2f', fontWeight: 600 }}>{lote.id}</td>
                   <td style={lS.td}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Icon name="file-text" size={13} color="#8f9c97" />
@@ -192,14 +194,30 @@ export function ListaLotes({ onSubir, onVerEnBandeja }) {
                   </td>
                   <td style={lS.td}>{lote.subido_por}</td>
                   <td style={{ ...lS.td, ...lS.mono, color: '#4a5550' }}>{lote.fecha}</td>
-                  <td style={lS.td}><StatusChip label={lote.estado} config={ec} /></td>
-                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right' }}>{lote.filas > 0 ? lote.filas.toLocaleString() : '—'}</td>
-                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: '#155a2e', fontWeight: 600 }}>{lote.ok > 0 ? lote.ok.toLocaleString() : '—'}</td>
-                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: lote.advertencias > 0 ? '#7a4a00' : '#8f9c97' }}>
-                    {lote.advertencias > 0 ? lote.advertencias : '—'}
+                  <td style={lS.td}>
+                    {ESTADOS_PROCESANDO.includes(lote.estado) ? (
+                      <ProgressBar
+                        pct={lote.progreso_pct}
+                        paso={lote.paso_actual}
+                        estado={lote.estado === 'PROCESANDO' ? 'PROCESANDO' : 'PROCESANDO'}
+                        size="sm"
+                      />
+                    ) : (
+                      <StatusChip label={lote.estado} config={ec} />
+                    )}
                   </td>
-                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: lote.errores > 0 ? '#c0392b' : '#8f9c97', fontWeight: lote.errores > 0 ? 700 : 400 }}>
-                    {lote.errores > 0 ? lote.errores : '—'}
+                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right' }}>{lote.filas > 0 ? lote.filas.toLocaleString() : '—'}</td>
+                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: '#155a2e', fontWeight: 600 }}>
+                    {lote.n_aprobados > 0 ? lote.n_aprobados.toLocaleString() : '—'}
+                  </td>
+                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: lote.n_revision > 0 ? '#7a4a00' : '#8f9c97' }}>
+                    {lote.n_revision > 0 ? lote.n_revision.toLocaleString() : '—'}
+                  </td>
+                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: lote.n_rechazado > 0 ? '#c0392b' : '#8f9c97', fontWeight: lote.n_rechazado > 0 ? 700 : 400 }}>
+                    {lote.n_rechazado > 0 ? lote.n_rechazado.toLocaleString() : '—'}
+                  </td>
+                  <td style={{ ...lS.td, ...lS.mono, textAlign: 'right', color: lote.n_fuera_alcance > 0 ? '#5b4a00' : '#8f9c97' }}>
+                    {lote.n_fuera_alcance > 0 ? lote.n_fuera_alcance.toLocaleString() : '—'}
                   </td>
                   <td style={lS.td}>
                     {ESTADOS_OK.includes(lote.estado) ? (
@@ -245,6 +263,7 @@ export function ListaLotes({ onSubir, onVerEnBandeja }) {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

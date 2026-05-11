@@ -1,3 +1,8 @@
+function fmtMedidor(val) {
+  if (!val) return '—';
+  return String(val).replace(/\.0$/, '');
+}
+
 function fmtDate(iso) {
   if (!iso) return '—';
   try {
@@ -36,15 +41,17 @@ export function normalizeLote(l) {
     _id: l.id,
     archivo: l.nombre_archivo,
     contratista: l.contratista_nombre || `ID:${l.contratista_id}`,
-    subido_por: `Usuario #${l.subido_por}`,
+    subido_por: l.usuario_nombre || `Usuario #${l.subido_por}`,
     fecha: fmtDateTime(l.fecha_subida),
     estado: l.estado,
-    // aggregate fields not in current schema
-    filas: 0,
-    ok: 0,
-    errores: l.estado === 'ERROR' ? 1 : 0,
-    advertencias: 0,
+    filas: l.total_filas ?? 0,
+    n_aprobados: l.n_aprobados ?? 0,
+    n_revision: l.n_revision ?? 0,
+    n_rechazado: l.n_rechazado ?? 0,
+    n_fuera_alcance: l.n_fuera_alcance ?? 0,
     detalle_error: l.detalle_error || null,
+    paso_actual: l.paso_actual || null,
+    progreso_pct: l.progreso_pct ?? 0,
   };
 }
 
@@ -58,7 +65,7 @@ export function normalizeParte(p) {
     fecha: fmtDate(p.fecha_ejecucion),
     suministro: p.suministro || '—',
     cod_epec: p.cod_epec != null ? String(p.cod_epec) : '—',
-    ord_nro: p.ord_nro != null ? `CE-${p.ord_nro}` : '—',
+    ord_nro: p.ord_nro != null ? String(p.ord_nro) : '—',
     traza: p.traza_calidad || '—',
     id_traza: p.id_traza,
     estado: p.estado || '—',
@@ -82,9 +89,9 @@ export function normalizeParteDetalle(p) {
     lote_id: p.lote_id,
     lote: p.lote_id ? `lote-${p.lote_id}` : '',
     raw_id: p.raw_id,
-    nro_medidor_retirado: p.nro_medidor_retirado || '—',
-    nro_medidor_colocado: p.nro_medidor_colocado || '—',
-    medidor_dec: p.nro_medidor_retirado || '—',
+    nro_medidor_retirado: fmtMedidor(p.nro_medidor_retirado),
+    nro_medidor_colocado: fmtMedidor(p.nro_medidor_colocado),
+    medidor_dec: fmtMedidor(p.nro_medidor_retirado),
     operario: p.operario_nombre || '—',
     version: p.version,
     cod_epec_sugerido: p.cod_epec_sugerido,

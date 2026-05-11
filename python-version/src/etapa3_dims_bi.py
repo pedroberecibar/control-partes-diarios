@@ -62,6 +62,8 @@ _DATOS_DIM_TRAZA: list[tuple[int, str]] = [
     (16, "Duplicado Exacto en Archivo Origen"),
     (17, "Datos Clave Faltantes"),
     (18, "Registro Ya Procesado en Lote Anterior"),
+    (19, "Rescatado por Oracle"),
+    (20, "Múltiples Candidatos Oracle"),
 ]
 
 

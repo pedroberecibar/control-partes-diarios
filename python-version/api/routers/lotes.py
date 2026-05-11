@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session
 
 from api.core.database import get_db
 from api.schemas.lote_schemas import LoteResponse, LoteListResponse
+from api.services.exceptions import (
+    DuplicadoBytesError,
+    DuplicadoContenidoError,
+    OverlapWarning,
+)
 from api.services.lote_service import LoteService
 
 router = APIRouter()
@@ -39,13 +44,17 @@ async def crear_lote(
     background_tasks: BackgroundTasks,
     contratista_id: int = Query(..., description="ID de la contratista"),
     subido_por: int = Query(..., description="ID del usuario que sube"),
+    force: bool = Query(False, description="Si True, omite el warning de overlap (Capa 3)"),
     archivo: UploadFile = File(..., description="Archivo Excel (.xlsx / .xls / .csv)"),
     db: Session = Depends(get_db),
 ):
     """Sube un archivo Excel y crea un registro de lote con estado RECIBIDO.
-    
-    El archivo se valida por hash SHA256 para evitar duplicados.
-    En un futuro, este endpoint disparará el procesamiento asíncrono (worker).
+
+    Antiduplicidad de tres capas (ver `LoteService.crear_lote`):
+        * 409 `DUP_BYTES`     — los bytes coinciden con un lote previo.
+        * 409 `DUP_CONTENT`   — el contenido lógico coincide con un lote previo.
+        * 409 `OVERLAP_WARN`  — la mayoría de los partes ya existen; reintentar
+                                con `?force=true` si se quiere continuar.
     """
     contenido = await archivo.read()
 
@@ -56,9 +65,40 @@ async def crear_lote(
             contenido_bytes=contenido,
             contratista_id=contratista_id,
             subido_por=subido_por,
+            force=force,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except DuplicadoBytesError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": e.code,
+                "lote_existente_id": e.lote_existente_id,
+                "mensaje": str(e),
+            },
+        )
+    except DuplicadoContenidoError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": e.code,
+                "lote_existente_id": e.lote_existente_id,
+                "mensaje": str(e),
+            },
+        )
+    except OverlapWarning as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": e.code,
+                "overlap_pct": e.overlap_pct,
+                "n_existentes": e.n_existentes,
+                "n_total": e.n_total,
+                "requires_force": True,
+                "mensaje": str(e),
+            },
+        )
 
     # Lanzar procesamiento en background
     background_tasks.add_task(procesar_lote_en_background, lote.id)

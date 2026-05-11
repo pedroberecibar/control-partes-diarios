@@ -49,6 +49,8 @@ const TRAZAS_OPCIONES = [
   { id: 13, label: 'Informado - No Ejecutado' },
   { id: 14, label: 'Código de Tarea No Mapeado' },
   { id: 15, label: 'Fecha Inválida' },
+  { id: 19, label: 'Rescatado por Oracle' },
+  { id: 20, label: 'Múltiples Candidatos Oracle' },
 ];
 
 const ESTADOS_OPCIONES = [
@@ -100,7 +102,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
   useEffect(() => {
     getLotes(0, 200)
       .then((res) => {
-        const procesados = (res.items || []).filter((l) => l.estado === 'PROCESADO_OK');
+        const procesados = (res.items || []).filter((l) => l.estado === 'APROBADO');
         setLotesDisponibles(procesados.map((l) => ({ id: l.id, label: l.nombre_archivo })));
       })
       .catch(() => {}); // silencioso — si falla, el filtro queda vacío
@@ -229,6 +231,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
     pageBtn: { width: 28, height: 28, border: '1px solid #d5ddd9', borderRadius: 4, background: 'white', fontSize: 12, cursor: 'pointer', color: '#4a5550', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     pageBtnActive: { background: '#124e2f', color: 'white', border: '1px solid #124e2f' },
     mockBanner: { padding: '5px 14px', background: '#fff3cd', borderBottom: '1px solid #f5d56a', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#7a4a00', fontWeight: 600, flexShrink: 0 },
+    actionBtn: { border: 'none', background: 'transparent', cursor: 'pointer', color: '#8f9c97', display: 'inline-flex', alignItems: 'center', padding: '3px', borderRadius: 3 },
   };
 
   return (

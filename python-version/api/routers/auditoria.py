@@ -3,7 +3,7 @@ Router para la consulta de la Bitácora de Auditoría.
 Controlador HTTP — solo lectura (append-only desde los servicios).
 """
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from api.core.database import get_db
 from api.db.models.domain_models import AuditoriaCambio
@@ -29,8 +29,9 @@ def listar_auditoria(
         query = query.filter(AuditoriaCambio.usuario_id == usuario_id)
 
     total = query.count()
-    items = (
-        query.order_by(AuditoriaCambio.fecha_cambio.desc())
+    rows = (
+        query.options(joinedload(AuditoriaCambio.usuario))
+        .order_by(AuditoriaCambio.fecha_cambio.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -38,5 +39,19 @@ def listar_auditoria(
 
     return AuditoriaListResponse(
         total=total,
-        items=[AuditoriaResponse.model_validate(i) for i in items],
+        items=[
+            AuditoriaResponse(
+                id=i.id,
+                parte_procesado_id=i.parte_procesado_id,
+                usuario_id=i.usuario_id,
+                usuario_nombre=i.usuario.username if i.usuario else None,
+                campo_modificado=i.campo_modificado,
+                valor_anterior=i.valor_anterior,
+                valor_nuevo=i.valor_nuevo,
+                motivo=i.motivo,
+                fecha_cambio=i.fecha_cambio,
+                version_resultante=i.version_resultante,
+            )
+            for i in rows
+        ],
     )

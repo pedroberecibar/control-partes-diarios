@@ -96,20 +96,17 @@ export const TRAZA_CONFIG = {
   'Sin Orden Asociada':     { bg:'#fde8e8', color:'#7a1c1c', label:'Sin Orden Asociada' },
   'Repetido X Sumi':        { bg:'#fde8e8', color:'#7a1c1c', label:'Repetido X Sumi' },
   'Error Sumi Nro Med':     { bg:'#fde8e8', color:'#7a1c1c', label:'Error Sumi Nro Med' },
-  'Otro Origen':            { bg:'#dbeafe', color:'#0d4272', label:'Otro Origen' },
-  'Informado-No Ejecutado': { bg:'#eaeeec', color:'#4a5550', label:'Inf.-No Ejecutado' },
+  'Otro Origen':                  { bg:'#dbeafe', color:'#0d4272', label:'Otro Origen' },
+  'Informado-No Ejecutado':       { bg:'#eaeeec', color:'#4a5550', label:'Inf.-No Ejecutado' },
+  'Rescatado por Oracle':         { bg:'#dbeafe', color:'#0d4272', label:'Rescatado Oracle' },
+  'Múltiples Candidatos Oracle':  { bg:'#fff3cd', color:'#7a4a00', label:'Múltiples Cands. Oracle' },
 };
 
 export const LOTE_ESTADO_CONFIG = {
-  'RECIBIDO':           { bg:'#dbeafe', color:'#0d4272' },
-  'VALIDANDO':          { bg:'#fff3cd', color:'#7a4a00' },
-  'PROCESANDO':         { bg:'#fff3cd', color:'#7a4a00' },
-  'EN_CORE':            { bg:'#fff3cd', color:'#7a4a00' },
-  'EN_OBS':             { bg:'#fff3cd', color:'#7a4a00' },
-  'OK':                 { bg:'#d4edda', color:'#155a2e' },
-  'PROCESADO_OK':       { bg:'#d4edda', color:'#155a2e' },
-  'RECHAZADO_SINTAXIS': { bg:'#fde8e8', color:'#7a1c1c' },
-  'ERROR':              { bg:'#fde8e8', color:'#7a1c1c' },
+  'RECIBIDO':   { bg:'#edf5f0', color:'#124e2f' },
+  'PROCESANDO': { bg:'#fff3cd', color:'#7a4a00' },
+  'APROBADO':   { bg:'#d4edda', color:'#155a2e' },
+  'RECHAZADO':  { bg:'#fde8e8', color:'#7a1c1c' },
 };
 
 export const PARTE_ESTADO_CONFIG = {

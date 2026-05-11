@@ -91,9 +91,17 @@ class ParteImportService:
             log.warning("importar_lote — df_final vacío tras dedup/exclusión (lote_id=%d).", lote_id)
             return {"raws": 0, "procesados": 0, "imagenes": 0}
 
+        # Precomputar el lookup cod_epec → valor_uses una sola vez para todo el lote.
+        # Se usa como fallback en _crear_procesados después de resolver el cod_epec final,
+        # cubriendo el caso donde el pipeline calculó USES antes de que _cod_epec_efectivo
+        # eligiera el código sugerido (Gap A) o donde _enriquecer_uses no tuvo datos (Gap B).
+        uses_lookup = self._build_uses_lookup()
+
+        self._validar_uses_coverage(df_final, lote_id)
+
         raws_by_hash = self._crear_raws(lote_id, df_aux, df_final)
         procesados_by_hash = self._crear_procesados(
-            lote_id, contratista_id, df_final, raws_by_hash
+            lote_id, contratista_id, df_final, raws_by_hash, uses_lookup
         )
         n_imgs = self._crear_imagenes(df_final, df_img, procesados_by_hash)
 
@@ -180,6 +188,7 @@ class ParteImportService:
         contratista_id: int,
         df_final: pd.DataFrame,
         raws_by_hash: dict[str, ParteDiarioRaw],
+        uses_lookup: dict[int, float] | None = None,
     ) -> dict[str, ParteDiarioProcesado]:
         procesados: list[ParteDiarioProcesado] = []
         for _, row in df_final.iterrows():
@@ -207,13 +216,15 @@ class ParteImportService:
 
                 # Resultado del waterfall
                 ord_nro=self._safe_int(row.get("ORD_NRO")),
-                cod_epec=self._safe_int(row.get("CODIGO_EPEC")),
+                cod_epec=(_cod := self._cod_epec_efectivo(row)),
                 id_estado=int(row["ID_ESTADO"]),    # nullable=False — fail-fast si falta
                 id_traza=int(row["ID_TRAZA"]),       # nullable=False — fail-fast si falta
 
                 # Control de obs (Etapa 4) — pueden no estar si el parte no fue procesado por E4
                 cod_epec_sugerido=self._safe_int(row.get("COD_EPEC_SUGERIDO")),
-                valor_uses_origen=self._safe_float(row.get("VALOR_USES_ORIGEN")),
+                valor_uses_origen=self._resolver_uses(
+                    row.get("VALOR_USES_ORIGEN"), _cod, uses_lookup
+                ),
                 valor_uses_obs=self._safe_float(row.get("VALOR_USES_OBS")),
                 diferencia_uses=self._safe_float(row.get("DIFERENCIA_USES")),
                 tipo_discrepancia=self._safe_str(row.get("DISCREPANCIA_CODIGO")),
@@ -234,6 +245,53 @@ class ParteImportService:
         self.db.add_all(procesados)
         self.db.flush()
         return {p.id_parte_hash: p for p in procesados}
+
+    def _cod_epec_efectivo(self, row: pd.Series) -> int | None:
+        """Para partes Aprobados (id_estado=1), garantiza un cod_epec: original o sugerido."""
+        cod = self._safe_int(row.get("CODIGO_EPEC"))
+        if cod is None and int(row.get("ID_ESTADO", 0)) == 1:
+            cod = self._safe_int(row.get("COD_EPEC_SUGERIDO"))
+        return cod
+
+    def _build_uses_lookup(self) -> dict[int, float]:
+        """Construye {cod_epec: valor_uses} desde la tabla reglas_cod_epec (DB).
+
+        Se llama una vez por lote en importar_lote para evitar N+1 queries.
+        Es la fuente de verdad final para el USES de cada código.
+        """
+        from api.db.models.domain_models import ReglaCodEpec
+        rows = (
+            self.db.query(ReglaCodEpec.cod_epec, ReglaCodEpec.valor_uses)
+            .filter(ReglaCodEpec.activo == True)
+            .all()
+        )
+        lookup = {r.cod_epec: r.valor_uses for r in rows}
+        if not lookup:
+            log.warning("_build_uses_lookup — reglas_cod_epec vacía; USES no se podrá asignar.")
+        return lookup
+
+    @staticmethod
+    def _resolver_uses(
+        valor_pipeline: Any,
+        cod_epec: int | None,
+        uses_lookup: dict[int, float] | None,
+    ) -> float | None:
+        """Devuelve VALOR_USES_ORIGEN con fallback al lookup por cod_epec final.
+
+        Prioridad:
+          1. Valor ya calculado por el pipeline (Etapa 4 o _enriquecer_uses).
+          2. Lookup por cod_epec resuelto (cubre aprobados con cod_epec del sugerido
+             y cualquier parte donde el pipeline no pudo asignar USES).
+          3. None si cod_epec es nulo o no tiene regla definida.
+        """
+        if valor_pipeline is not None and not pd.isna(valor_pipeline):
+            try:
+                return float(valor_pipeline)
+            except (TypeError, ValueError):
+                pass
+        if cod_epec is not None and uses_lookup:
+            return uses_lookup.get(cod_epec)
+        return None
 
     @classmethod
     def _extraer_observaciones(cls, row: pd.Series) -> dict[str, bool]:
@@ -337,30 +395,69 @@ class ParteImportService:
             return value.to_pydatetime()
         return value
 
-    def _limpiar_lote_previo(self, lote_id: int) -> None:
-        """Elimina imágenes, procesados y raws de un intento previo del mismo lote.
+    def _validar_uses_coverage(self, df: pd.DataFrame, lote_id: int) -> None:
+        """Loguea advertencias si hay partes con cod_epec pero sin VALOR_USES_ORIGEN.
 
-        El delete bulk con synchronize_session=False no dispara el ORM cascade, y
-        SQLite no aplica FK CASCADE sin PRAGMA foreign_keys=ON (activado en database.py
-        desde la conexión, pero no garantizado en sesiones preexistentes). Para blindar
-        contra duplicados de imágenes, siempre eliminamos explícitamente en orden correcto:
-        imágenes → procesados → raws.
+        Un USES nulo en un parte aprobado (ID_ESTADO=1) con cod_epec es siempre
+        un error de datos: significa que el cod_epec no tiene regla definida.
+        """
+        if "CODIGO_EPEC" not in df.columns or "VALOR_USES_ORIGEN" not in df.columns:
+            return
+        mask_aprobado = df.get("ID_ESTADO", pd.Series(dtype=int)) == 1
+        mask_con_epec = df["CODIGO_EPEC"].notna()
+        mask_sin_uses = df["VALOR_USES_ORIGEN"].isna()
+
+        n_total       = len(df)
+        n_con_uses    = int((mask_con_epec & ~mask_sin_uses).sum())
+        n_sin_uses    = int((mask_con_epec & mask_sin_uses).sum())
+        n_aprobado_sin = int((mask_aprobado & mask_sin_uses).sum())
+
+        log.info(
+            "importar_lote %d — USES coverage: total=%d con_epec_y_uses=%d sin_uses=%d",
+            lote_id, n_total, n_con_uses, n_sin_uses,
+        )
+        if n_aprobado_sin > 0:
+            codigos = (
+                df.loc[mask_aprobado & mask_sin_uses, "CODIGO_EPEC"]
+                .dropna().astype(int).unique().tolist()
+            )
+            log.warning(
+                "importar_lote %d — %d partes APROBADOS sin VALOR_USES_ORIGEN "
+                "(cod_epec sin regla definida): %s",
+                lote_id, n_aprobado_sin, codigos,
+            )
+
+    def _limpiar_lote_previo(self, lote_id: int) -> None:
+        """Elimina imágenes, auditoría, procesados y raws de un intento previo del mismo lote.
+
+        El delete bulk con synchronize_session=False no dispara el ORM cascade.
+        Orden obligatorio para satisfacer FK constraints:
+          parte_imagenes → auditoria_cambios → partes_diarios_procesados → partes_diarios_raw.
         """
         from sqlalchemy import select as sa_select
+        from api.db.models.domain_models import AuditoriaCambio
 
-        # 1. Eliminar imágenes vía subquery (sin cargar IDs en Python).
         subq = (
             sa_select(ParteDiarioProcesado.id)
             .where(ParteDiarioProcesado.lote_id == lote_id)
             .scalar_subquery()
         )
+
+        # 1. Imágenes
         n_imgs = (
             self.db.query(ParteImagen)
             .filter(ParteImagen.parte_procesado_id.in_(subq))
             .delete(synchronize_session=False)
         )
 
-        # 2. Eliminar procesados y raws.
+        # 2. Auditoría (FK → partes_diarios_procesados.id)
+        n_audit = (
+            self.db.query(AuditoriaCambio)
+            .filter(AuditoriaCambio.parte_procesado_id.in_(subq))
+            .delete(synchronize_session=False)
+        )
+
+        # 3. Procesados y raws
         n = (
             self.db.query(ParteDiarioProcesado)
             .filter(ParteDiarioProcesado.lote_id == lote_id)
@@ -372,8 +469,8 @@ class ParteImportService:
 
         if n:
             log.info(
-                "_limpiar_lote_previo — lote %d: %d procesados y %d imágenes eliminados.",
-                lote_id, n, n_imgs,
+                "_limpiar_lote_previo — lote %d: %d procesados, %d imágenes, %d auditoría eliminados.",
+                lote_id, n, n_imgs, n_audit,
             )
 
     def _rescatar_sumi_nulos(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -418,23 +515,15 @@ class ParteImportService:
 
     def _rescatar_hashes_existentes(self, df_final: pd.DataFrame, lote_id: int) -> pd.DataFrame:
         """Rescata filas cuyo hash ya existe en otro lote (en lugar de descartarlas)."""
+        from api.services.parte_dedup_helpers import contar_hashes_existentes
+
         if "ID_PARTE_HASH" not in df_final.columns:
             return df_final
         all_hashes = df_final["ID_PARTE_HASH"].dropna().unique().tolist()
         if not all_hashes:
             return df_final
 
-        existing: set[str] = set()
-        chunk_size = 900
-        for i in range(0, len(all_hashes), chunk_size):
-            chunk = all_hashes[i : i + chunk_size]
-            rows = (
-                self.db.query(ParteDiarioProcesado.id_parte_hash)
-                .filter(ParteDiarioProcesado.id_parte_hash.in_(chunk))
-                .all()
-            )
-            existing.update(row[0] for row in rows)
-
+        existing = contar_hashes_existentes(self.db, all_hashes)
         if not existing:
             return df_final
 

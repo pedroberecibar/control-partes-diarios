@@ -14,7 +14,9 @@ from api.schemas.parte_schemas import (
     ParteListResponse,
     ParteVisorDTO,
 )
+from api.schemas.sugerencias_schemas import CandidatosEpecResponse
 from api.services.parte_service import ParteService
+from api.services.sugerencias_service import SugerenciasService
 
 router = APIRouter()
 
@@ -81,6 +83,44 @@ def obtener_visor(parte_id: int, db: Session = Depends(get_db)):
     if visor is None:
         raise HTTPException(status_code=404, detail=f"Parte con id={parte_id} no encontrado.")
     return visor
+
+
+@router.get("/{parte_id}/candidatos-oracle", summary="Buscar ordenativos CE candidatos en la DB local")
+def candidatos_oracle(parte_id: int, db: Session = Depends(get_db)):
+    """Devuelve ordenativos CE candidatos consultando la DB local sincronizada
+    desde Oracle SIGEC (CE + PROTELEM).
+
+    Combina:
+    - Búsqueda A: ordenativos del suministro declarado.
+    - Búsqueda B: ordenativos del suministro al que están instalados los medidores.
+
+    Si la DB local nunca fue sincronizada, devuelve ``aviso`` orientativo y lista vacía.
+    """
+    parte = ParteService(db).obtener_parte(parte_id)
+    if parte is None:
+        raise HTTPException(status_code=404, detail=f"Parte con id={parte_id} no encontrado.")
+
+    from api.services.rescate_ordenativos_service import buscar_candidatos_local
+    return buscar_candidatos_local(
+        db,
+        suministro=parte.suministro or "",
+        nro_medidor_colocado=parte.nro_medidor_colocado,
+        nro_medidor_retirado=parte.nro_medidor_retirado,
+        fecha_ref=parte.fecha_ejecucion,
+    )
+
+
+@router.get(
+    "/{parte_id}/codigos-epec-candidatos",
+    response_model=CandidatosEpecResponse,
+    summary="Sugiere cod_epec candidatos en base a las observaciones del operario",
+)
+def codigos_epec_candidatos(parte_id: int, db: Session = Depends(get_db)):
+    try:
+        return SugerenciasService(db).candidatos_para_parte(parte_id)
+    except ValueError as e:
+        msg = str(e)
+        raise HTTPException(status_code=404 if "no existe" in msg else 400, detail=msg)
 
 
 @router.patch("/{parte_id}", response_model=ParteDetalleResponse, summary="Editar un parte (auditoría)")

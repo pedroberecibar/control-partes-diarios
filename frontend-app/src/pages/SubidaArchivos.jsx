@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { crearLote } from '../api/lotesApi';
+import { ProgressBar } from '../components/ProgressBar';
+import { crearLote, getLote } from '../api/lotesApi';
 
 // Temporary mapping — must match seeded contratista IDs in the DB.
 // If they differ, update these values after checking `SELECT id, nombre FROM contratistas`.
@@ -22,7 +23,11 @@ export function SubidaArchivos({ onBack }) {
   const [step, setStep]                   = useState('drop'); // drop | preview | uploading | result | error
   const [uploadResult, setUploadResult]   = useState(null);
   const [uploadError, setUploadError]     = useState(null);
+  const [errorPayload, setErrorPayload]   = useState(null); // { code, lote_existente_id?, ... }
+  const [overlapWarn, setOverlapWarn]     = useState(null); // { overlap_pct, n_existentes, n_total }
+  const [progressLote, setProgressLote]   = useState(null); // último snapshot del lote para barra
   const fileInputRef = useRef();
+  const pollRef = useRef(null);
 
   function handleDrop(e) {
     e.preventDefault();
@@ -35,29 +40,60 @@ export function SubidaArchivos({ onBack }) {
     if (chosen.length) { setFiles(chosen); setStep('preview'); }
   }
 
-  async function handleUpload() {
+  async function doUpload({ force = false } = {}) {
     if (!files.length) return;
     setStep('uploading');
     setUploadResult(null);
     setUploadError(null);
+    setErrorPayload(null);
+    setOverlapWarn(null);
+    setProgressLote(null);
     try {
       const lote = await crearLote(
         files[0],
         CONTRATISTA_IDS[contratista] ?? 1,
         USUARIO_ID_DEFAULT,
+        { force },
       );
       setUploadResult(lote);
+      setProgressLote(lote);
       setStep('result');
     } catch (err) {
-      setUploadError(err.message || 'Error desconocido al subir el archivo.');
-      setStep('error');
+      if (err.code === 'OVERLAP_WARN') {
+        setOverlapWarn(err.payload || null);
+        setStep('preview'); // volver a preview con el modal abierto encima
+      } else {
+        setErrorPayload(err.payload || null);
+        setUploadError(err.message || 'Error desconocido al subir el archivo.');
+        setStep('error');
+      }
     }
   }
 
+  const handleUpload = () => doUpload({ force: false });
+  const handleUploadForce = () => doUpload({ force: true });
+
+  // Polling de progreso del lote recién creado mientras el worker procesa.
+  useEffect(() => {
+    if (step !== 'result' || !progressLote?.id) return;
+    const inProgress = ['RECIBIDO', 'PROCESANDO'].includes(progressLote.estado);
+    if (!inProgress) return;
+    pollRef.current = setTimeout(() => {
+      getLote(progressLote.id)
+        .then((fresh) => setProgressLote(fresh))
+        .catch(() => {});
+    }, 2000);
+    return () => clearTimeout(pollRef.current);
+  }, [step, progressLote]);
+
   function resetFlow() {
+    clearTimeout(pollRef.current);
     setFiles([]);
     setUploadResult(null);
     setUploadError(null);
+    setErrorPayload(null);
+    setOverlapWarn(null);
+    setProgressLote(null);
     setStep('drop');
   }
 
@@ -238,7 +274,7 @@ export function SubidaArchivos({ onBack }) {
       {step === 'uploading' && (
         <div style={sS.card}>
           <div style={sS.cardBody}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
               <Icon name="loader" size={22} color="#124e2f" />
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: '#2f3733' }}>
@@ -249,6 +285,7 @@ export function SubidaArchivos({ onBack }) {
                 </div>
               </div>
             </div>
+            <ProgressBar pct={5} paso="RECIBIENDO" estado="PROCESANDO" size="md" />
           </div>
         </div>
       )}
@@ -264,11 +301,11 @@ export function SubidaArchivos({ onBack }) {
               </span>
             </div>
             <div style={sS.cardBody}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 14 }}>
                 {[
                   ['ID Lote', `#${uploadResult.id}`],
                   ['Archivo', uploadResult.nombre_archivo],
-                  ['Estado inicial', uploadResult.estado],
+                  ['Estado', progressLote?.estado || uploadResult.estado],
                 ].map(([l, v]) => (
                   <div key={l}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: '#8f9c97', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{l}</div>
@@ -276,9 +313,21 @@ export function SubidaArchivos({ onBack }) {
                   </div>
                 ))}
               </div>
-              <div style={{ marginTop: 12, padding: '8px 12px', background: '#fff3cd', border: '1px solid #f5d56a', borderRadius: 4, fontSize: 11.5, color: '#7a4a00' }}>
-                <strong>Nota:</strong> El worker de procesamiento corre de forma asíncrona. El estado pasará de <code>RECIBIDO</code> a <code>PROCESANDO</code> → <code>PROCESADO_OK</code> (o <code>ERROR</code>). Consultá la Lista de Lotes para el estado final.
-              </div>
+              <ProgressBar
+                pct={progressLote?.progreso_pct ?? 0}
+                paso={progressLote?.paso_actual}
+                estado={progressLote?.estado === 'APROBADO'
+                  ? 'APROBADO'
+                  : progressLote?.estado === 'RECHAZADO'
+                    ? 'RECHAZADO'
+                    : 'PROCESANDO'}
+                size="md"
+              />
+              {progressLote?.estado === 'RECHAZADO' && progressLote?.detalle_error && (
+                <div style={{ marginTop: 10, padding: '8px 12px', background: '#fde8e8', border: '1px solid #f5b7b1', borderRadius: 4, fontSize: 11.5, color: '#7a1c1c', fontFamily: "'JetBrains Mono', monospace" }}>
+                  {progressLote.detalle_error}
+                </div>
+              )}
             </div>
           </div>
 
@@ -299,21 +348,81 @@ export function SubidaArchivos({ onBack }) {
           <div style={{ ...sS.card, border: '1px solid #f5b7b1' }}>
             <div style={{ ...sS.cardHeader, background: '#fde8e8', borderBottom: '1px solid #f5b7b1' }}>
               <Icon name="x-circle" size={14} color="#c0392b" />
-              <span style={{ ...sS.cardTitle, color: '#7a1c1c' }}>Error al subir el archivo</span>
+              <span style={{ ...sS.cardTitle, color: '#7a1c1c' }}>
+                {errorPayload?.code === 'DUP_BYTES' && 'Archivo idéntico ya subido'}
+                {errorPayload?.code === 'DUP_CONTENT' && 'El contenido ya fue procesado en otro lote'}
+                {!['DUP_BYTES', 'DUP_CONTENT'].includes(errorPayload?.code) && 'Error al subir el archivo'}
+              </span>
             </div>
             <div style={sS.cardBody}>
               <div style={{ padding: '10px 12px', background: '#fde8e8', borderRadius: 4, fontSize: 12.5, color: '#7a1c1c', fontFamily: "'JetBrains Mono', monospace" }}>
                 {uploadError}
               </div>
-              <div style={{ marginTop: 10, fontSize: 11.5, color: '#6b7772' }}>
-                Verificá que el backend esté corriendo en <code>http://localhost:8000</code> y que el contratista ID {CONTRATISTA_IDS[contratista]} exista en la base de datos.
-              </div>
+              {errorPayload?.lote_existente_id ? (
+                <div style={{ marginTop: 10, fontSize: 12, color: '#4a5550' }}>
+                  Lote existente: <strong>#{errorPayload.lote_existente_id}</strong>. Si querés reprocesarlo, abrí la Lista de Lotes y usá la acción "Reprocesar".
+                </div>
+              ) : (
+                <div style={{ marginTop: 10, fontSize: 11.5, color: '#6b7772' }}>
+                  Verificá que el backend esté corriendo en <code>http://localhost:8000</code> y que el contratista ID {CONTRATISTA_IDS[contratista]} exista en la base de datos.
+                </div>
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button style={sS.btnSecondary} onClick={resetFlow}>Volver a intentar</button>
           </div>
         </>
+      )}
+
+      {/* ── Modal: confirmación overlap ─────────────────────── */}
+      {overlapWarn && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(17,22,20,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setOverlapWarn(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 8, width: 460, maxWidth: '92%',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.18)',
+              animation: 'modalIn 0.18s ease',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '14px 18px', background: '#fff3cd', borderBottom: '1px solid #f5d56a', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Icon name="alert-circle" size={16} color="#7a4a00" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#7a4a00' }}>
+                Posible duplicado parcial
+              </span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: '#2f3733', margin: 0, lineHeight: 1.5 }}>
+                <strong>{overlapWarn.n_existentes}</strong> de <strong>{overlapWarn.n_total}</strong> partes
+                {' '}({Math.round((overlapWarn.overlap_pct || 0) * 100)}%) ya existen en lotes previos.
+              </p>
+              <p style={{ fontSize: 12, color: '#6b7772', marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
+                Si continuás, los partes ya existentes se marcarán como Fuera de Alcance y solo se incorporarán los nuevos. ¿Confirmás?
+              </p>
+            </div>
+            <div style={{ padding: '12px 18px', background: '#fafcfb', borderTop: '1px solid #eaeeec', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button style={sS.btnSecondary} onClick={() => setOverlapWarn(null)}>Cancelar</button>
+              <button
+                style={{ ...sS.btnPrimary, background: '#7a4a00' }}
+                onClick={() => { setOverlapWarn(null); handleUploadForce(); }}
+              >
+                <Icon name="upload" size={13} /> Continuar igual
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

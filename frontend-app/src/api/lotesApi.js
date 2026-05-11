@@ -8,13 +8,37 @@ export const getLote = (id) => apiFetch(`/api/v1/lotes/${id}`);
 export const reprocesarLote = (id) =>
   apiFetch(`/api/v1/lotes/${id}/reprocesar`, { method: 'POST' });
 
-export function crearLote(archivo, contratistaId, subidoPor) {
+/**
+ * Sube un archivo y crea un lote.
+ *
+ * Errores 409 conocidos (la API devuelve `detail` como objeto):
+ *   - DUP_BYTES      → archivo idéntico ya subido (bytes coinciden)
+ *   - DUP_CONTENT    → contenido idéntico (bytes distintos, mismo Excel re-guardado)
+ *   - OVERLAP_WARN   → la mayoría de los partes ya existen; reintentar con force=true
+ *
+ * Esos errores se rethrowean con `err.code` y `err.payload` poblados para que
+ * el caller pueda decidir cómo reaccionar (mostrar modal, error duro, etc.).
+ */
+export function crearLote(archivo, contratistaId, subidoPor, { force = false } = {}) {
   const fd = new FormData();
   fd.append('archivo', archivo);
-  const url = `${BASE_URL}/api/v1/lotes?contratista_id=${contratistaId}&subido_por=${subidoPor}`;
-  return fetch(url, { method: 'POST', body: fd }).then((r) =>
-    r.ok
-      ? r.json()
-      : r.json().then((e) => Promise.reject(new Error(e?.detail || `HTTP ${r.status}`)))
-  );
+  const params = new URLSearchParams({
+    contratista_id: String(contratistaId),
+    subido_por: String(subidoPor),
+  });
+  if (force) params.set('force', 'true');
+  const url = `${BASE_URL}/api/v1/lotes?${params.toString()}`;
+  return fetch(url, { method: 'POST', body: fd }).then(async (r) => {
+    if (r.ok) return r.json();
+    const body = await r.json().catch(() => ({}));
+    const detail = body?.detail;
+    if (detail && typeof detail === 'object' && detail.code) {
+      const err = new Error(detail.mensaje || `HTTP ${r.status}`);
+      err.code = detail.code;
+      err.payload = detail;
+      err.status = r.status;
+      throw err;
+    }
+    throw new Error((typeof detail === 'string' ? detail : null) || `HTTP ${r.status}`);
+  });
 }

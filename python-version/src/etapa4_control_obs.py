@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
+from . import hamming as hamming_helper
 from . import io_lakehouse as io
 
 log = logging.getLogger(__name__)
@@ -42,6 +43,9 @@ log = logging.getLogger(__name__)
 # Columnas de observación: (col en pivot, col en reglas). Orden importa para Hamming.
 OBS_COLS = config.OBS_COLS              # 8 pares — single source of truth
 VALOR_USES_COD_11 = config.VALOR_USES_COD_11
+
+# Mapeo ID_EMPRESA → nombre de contratista (coincide con dim_empresa_bi).
+_ID_EMPRESA_TO_NOMBRE: dict[int, str] = {1: "CONECTAR", 2: "COOPLYF"}
 
 # Cols de imágenes en el pivot (no son OBS_COLS — se usan solo en dim_img).
 COLS_IMG_PIVOT = [
@@ -285,10 +289,17 @@ def _concat_flags(df: pd.DataFrame, cols: list[str], prefix: str) -> pd.Series:
 # =============================================================================
 
 def _calcular_hamming_global(
-    df: pd.DataFrame, df_reglas: pd.DataFrame
+    df: pd.DataFrame,
+    df_reglas: pd.DataFrame,
+    mapeo_codigos: "dict[str, set[int]] | None" = None,
 ) -> pd.DataFrame:
     """Adjunta `_REGLA_COD_EPEC`, `_REGLA_DESCRIPCION`, `_REGLA_VALOR_USES`,
-    `HAMMING_DIST` correspondientes a la regla con menor Hamming global."""
+    `HAMMING_DIST` correspondientes a la regla con menor Hamming global.
+
+    Si `mapeo_codigos` se provee, la búsqueda se restringe a los COD_EPEC
+    permitidos para cada contratista (según ID_EMPRESA). Candidatos bloqueados
+    reciben distancia LARGE (int16 max) y nunca son elegidos.
+    """
     n_partes = len(df)
     n_reglas = len(df_reglas)
 
@@ -297,9 +308,25 @@ def _calcular_hamming_global(
     app_mat   = df[[f"_APP_{cr}" for cr in cols_obs]].fillna(0).to_numpy(dtype="int8")
     regla_mat = df_reglas[cols_obs].fillna(0).to_numpy(dtype="int8")
 
-    # Hamming entre cada parte y cada regla — broadcast vectorizado N×M.
-    # Equivale al cross join + sum(abs(diff)) del Spark, pero sin generar el DF intermedio.
-    hamming = np.abs(app_mat[:, None, :] - regla_mat[None, :, :]).sum(axis=2)  # shape (N, M)
+    # Hamming N×M vía helper compartido con el endpoint de sugerencias (sin drift).
+    hamming = hamming_helper.hamming_matrix(app_mat, regla_mat)
+
+    if mapeo_codigos:
+        epec_por_regla = df_reglas["COD_EPEC"].to_numpy()                      # M
+        nombres = df["ID_EMPRESA"].map(_ID_EMPRESA_TO_NOMBRE).to_numpy()        # N
+        # Máscara M-dimensional por contratista único (≤2 iteraciones en producción).
+        unique_nombres = set(nombres)
+        mascara_por_c: dict[str, np.ndarray] = {}
+        for c in unique_nombres:
+            codigos_ok = mapeo_codigos.get(c)
+            mascara_por_c[c] = (
+                np.isin(epec_por_regla, list(codigos_ok))
+                if codigos_ok else np.ones(n_reglas, dtype=bool)
+            )
+        # Stack N×M: celdas bloqueadas → LARGE, nunca elegidas por argmin.
+        mascara = np.stack([mascara_por_c[c] for c in nombres], axis=0)
+        _LARGE = int(np.iinfo("int16").max)
+        hamming = np.where(mascara, hamming, _LARGE).astype("int16")
 
     # Para reproducir el orden estable de Spark con tie-breaker por _REGLA_DESCRIPCION:
     # primero ordeno las reglas por descripción asc, así con argmin estable elegimos
@@ -318,8 +345,12 @@ def _calcular_hamming_global(
     df_reglas_sel["HAMMING_DIST"] = hamming[np.arange(n_partes), regla_idx_min_per_parte].astype("int16")
 
     out = pd.concat([df.reset_index(drop=True), df_reglas_sel], axis=1)
-    log.info("   Hamming global calculado: %d partes × %d reglas (%d comparaciones).",
-             n_partes, n_reglas, n_partes * n_reglas)
+    log.info(
+        "   Hamming global calculado: %d partes × %d reglas (%d comparaciones).%s",
+        n_partes, n_reglas, n_partes * n_reglas,
+        f" Restricción por contratista activa ({len(mapeo_codigos)} contratistas)."
+        if mapeo_codigos else "",
+    )
     return out
 
 
@@ -586,16 +617,23 @@ def run(df_fact_input: pd.DataFrame | None = None) -> dict:
 
 def procesar_etapa4(
     df_fact_input: pd.DataFrame,
+    df_reglas: "pd.DataFrame | None" = None,
+    mapeo_codigos: "dict[str, set[int]] | None" = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Entrypoint in-memory para el worker de la Web App.
 
     Ejecuta los 7 PASOS sobre el DataFrame en memoria y devuelve:
         (df_final, df_img, metricas)
 
-    `df_final`: control_obs_app — un registro por parte aprobado, con todas
-                las cols del fact + observaciones + USES + sugeridos + discrepancia.
-    `df_img`:   dim_img_app_pd — un registro por ORD_NRO con IMAGEN_1..IMAGEN_5.
-    `metricas`: dict con totales para logging.
+    `df_fact_input`: fact table del motor analítico (Etapa 3).
+    `df_reglas`:     reglas de observaciones precargadas (desde ORM vía ReglaService).
+                     Si es None, se lee desde master/reglas_cod_obs_app.parquet (fallback CLI).
+    `mapeo_codigos`: {contratista.nombre.upper(): {cod_epec, ...}} activos.
+                     Si se provee, el Hamming se restringe a los códigos permitidos
+                     por contratista. None → sin restricción (comportamiento previo).
+    `df_final`:      control_obs_app — un registro por parte aprobado.
+    `df_img`:        dim_img_app_pd — un registro por ORD_NRO con IMAGEN_1..IMAGEN_5.
+    `metricas`:      dict con totales para logging.
 
     No escribe Parquet. Reutiliza la pipeline interna de `run()` sin tocar I/O.
     """
@@ -605,12 +643,13 @@ def procesar_etapa4(
     df_con_app = _join_con_pivot_app(df_base)
     df_norm = _normalizar_obs(df_con_app)
 
-    df_reglas = io.read_table("reglas_cod_obs_app", capa="master")
+    if df_reglas is None:
+        df_reglas = io.read_table("reglas_cod_obs_app", capa="master")
     df_reglas["COD_EPEC"] = df_reglas["COD_EPEC"].astype("Int64")
 
     df_origen = _agregar_valor_uses_origen(df_norm, df_reglas)
     df_4a = _calcular_faltantes_excedentes_decl(df_origen, df_reglas)
-    df_4b = _calcular_hamming_global(df_4a, df_reglas)
+    df_4b = _calcular_hamming_global(df_4a, df_reglas, mapeo_codigos=mapeo_codigos)
     df_5 = _asignar_sugerido(df_4b)
     df_6 = _calcular_discrepancia(df_5)
 

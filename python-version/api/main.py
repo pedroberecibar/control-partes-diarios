@@ -1,16 +1,32 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import lotes, partes, auditoria
+from api.core.database import Base, engine
+from api.routers import lotes, partes, auditoria, admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+log = logging.getLogger("api.main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Importar todos los modelos para que Base.metadata los conozca antes del create_all.
+    import api.db.models.base_models   # noqa: F401
+    import api.db.models.domain_models # noqa: F401
+    Base.metadata.create_all(bind=engine)
+    log.info("DB tables ensured.")
+    yield
+
 
 app = FastAPI(
     title="Partes Diarios Web App API",
     description="API para la gestión, validación y auditoría de partes diarios operativos.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configuración CORS para permitir peticiones del frontend local
@@ -38,3 +54,4 @@ def health_check():
 app.include_router(lotes.router, prefix="/api/v1/lotes", tags=["Lotes"])
 app.include_router(partes.router, prefix="/api/v1/partes", tags=["Partes Diarios"])
 app.include_router(auditoria.router, prefix="/api/v1/auditoria", tags=["Auditoría"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin — Códigos EPEC"])
