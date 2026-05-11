@@ -19,6 +19,13 @@ export const getParte = (id) => apiFetch(`/api/v1/partes/${id}`);
 
 export const getVisor = (id) => apiFetch(`/api/v1/partes/${id}/visor`);
 
+export const getCandidatosOracle = (id) => apiFetch(`/api/v1/partes/${id}/candidatos-oracle`);
+
+export const getCodigosEpecCandidatos = (id) =>
+  apiFetch(`/api/v1/partes/${id}/codigos-epec-candidatos`);
+
+export const getOpcionesCodEpec = () => apiFetch('/api/v1/admin/reglas/cod-epec-opciones');
+
 export function editarParte(id, payload) {
   return apiFetch(`/api/v1/partes/${id}`, {
     method: 'PATCH',
