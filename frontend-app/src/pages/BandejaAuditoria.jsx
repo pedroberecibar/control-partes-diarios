@@ -76,7 +76,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
   const [partes, setPartes]           = useState([]);
   const [total, setTotal]             = useState(0);
   const [loading, setLoading]         = useState(true);
-  const [usingMock, setUsingMock]     = useState(false);
+  const [error, setError]             = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [filters, setFilters]         = useState(() => {
     const stored = readStorage().filters ?? DEFAULTS.filters;
@@ -136,10 +136,9 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
         if (!cancelled) {
           setPartes(res.items.map(normalizeParte));
           setTotal(res.total);
-          setUsingMock(false);
         }
       })
-      .catch(() => { if (!cancelled) setUsingMock(true); })
+      .catch(() => { if (!cancelled) setError(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
@@ -230,7 +229,6 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
     pagination: { padding: '10px 16px', background: 'white', borderTop: '1px solid #eaeeec', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 },
     pageBtn: { width: 28, height: 28, border: '1px solid #d5ddd9', borderRadius: 4, background: 'white', fontSize: 12, cursor: 'pointer', color: '#4a5550', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     pageBtnActive: { background: '#124e2f', color: 'white', border: '1px solid #124e2f' },
-    mockBanner: { padding: '5px 14px', background: '#fff3cd', borderBottom: '1px solid #f5d56a', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#7a4a00', fontWeight: 600, flexShrink: 0 },
     actionBtn: { border: 'none', background: 'transparent', cursor: 'pointer', color: '#8f9c97', display: 'inline-flex', alignItems: 'center', padding: '3px', borderRadius: 3 },
   };
 
@@ -359,10 +357,9 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
       </div>
 
       <div style={bS.main}>
-        {usingMock && (
-          <div style={bS.mockBanner}>
-            <Icon name="alert-circle" size={12} color="#e6910a" />
-            Backend no disponible — mostrando datos de demostración
+        {error && (
+          <div style={{ padding: '5px 14px', background: '#fde8e8', borderBottom: '1px solid #f5b7b1', fontSize: 11, color: '#7a1c1c', fontWeight: 600, flexShrink: 0 }}>
+            Backend no disponible
           </div>
         )}
 
@@ -402,8 +399,10 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
 
         <div style={bS.tableWrap}>
           {loading && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', color: '#8f9c97', fontSize: 13 }}>
-              Cargando partes…
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: 12 }}>
+              <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+              <Icon name="loader" size={28} color="#8f9c97" style={{ animation: 'spin 1s linear infinite' }} />
+              <div style={{ color: '#8f9c97', fontSize: 13, fontWeight: 500 }}>Cargando partes…</div>
             </div>
           )}
           {!loading && partes.length === 0 && (

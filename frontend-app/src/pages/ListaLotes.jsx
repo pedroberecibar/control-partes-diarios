@@ -3,15 +3,15 @@ import { Icon, LOTE_ESTADO_CONFIG, StatusChip } from '../components/Icon';
 import { ProgressBar } from '../components/ProgressBar';
 import { getLotes, reprocesarLote } from '../api/lotesApi';
 import { normalizeLote } from '../api/normalizers';
-import { LOTES_DATA } from '../data/lotesMock';
 
 const ESTADOS_OK         = ['APROBADO'];
 const ESTADOS_PROCESANDO = ['RECIBIDO', 'PROCESANDO'];
 const ESTADOS_ERROR      = ['RECHAZADO'];
 
 export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
-  const [lotes, setLotes]               = useState(LOTES_DATA);
-  const [usingMock, setUsingMock]       = useState(false);
+  const [lotes, setLotes]               = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState(false);
   const [search, setSearch]             = useState('');
   const [estadoFilter, setEstadoFilter] = useState('');
   const [reprocesando, setReprocesando] = useState(new Set());
@@ -23,7 +23,7 @@ export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
         if (!cancelled.val) {
           const normalized = res.items.map(normalizeLote);
           setLotes(normalized);
-          setUsingMock(false);
+          setLoading(false);
           // Mientras haya lotes en proceso, seguir polling cada 2 s.
           const enProceso = normalized.some((l) => ESTADOS_PROCESANDO.includes(l.estado));
           if (enProceso) {
@@ -34,7 +34,7 @@ export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
         }
       })
       .catch(() => {
-        if (!cancelled.val) setUsingMock(true);
+        if (!cancelled.val) { setError(true); setLoading(false); }
       });
   };
 
@@ -97,7 +97,6 @@ export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
     mono: { fontFamily: "'JetBrains Mono', monospace", fontSize: 11 },
     trHover: { cursor: 'pointer', transition: 'background 0.08s' },
     actionBtn: { border: 'none', background: 'transparent', cursor: 'pointer', color: '#8f9c97', display: 'inline-flex', alignItems: 'center', padding: '2px 4px', borderRadius: 3, transition: 'all 0.1s' },
-    mockBanner: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: '#fff3cd', border: '1px solid #f5d56a', borderRadius: 4, fontSize: 11, color: '#7a4a00', fontWeight: 600, marginBottom: 12 },
   };
 
   const kpis = [
@@ -109,7 +108,18 @@ export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
 
   return (
     <div style={lS.root}>
-      <div style={lS.pageHeader}>
+      <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+      
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12 }}>
+          <Icon name="loader" size={32} color="#8f9c97" style={{ animation: 'spin 1s linear infinite' }} />
+          <div style={{ fontSize: 13, color: '#8f9c97', fontWeight: 500 }}>Cargando lotes...</div>
+        </div>
+      ) : error ? (
+        <div style={{ padding: 20, color: '#c0392b', fontSize: 13 }}>Backend no disponible</div>
+      ) : (
+        <>
+          <div style={lS.pageHeader}>
         <div>
           <div style={lS.pageTitle}>Lista de Lotes</div>
           <div style={lS.pageSub}>Módulo A — Ingesta de Partes Diarios</div>
@@ -118,13 +128,6 @@ export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
           <Icon name="upload" size={14} /> Subir Archivos
         </button>
       </div>
-
-      {usingMock && (
-        <div style={lS.mockBanner}>
-          <Icon name="alert-circle" size={13} color="#e6910a" />
-          Backend no disponible — mostrando datos de demostración
-        </div>
-      )}
 
       <div style={lS.kpiRow}>
         {kpis.map((k) => (
@@ -265,6 +268,8 @@ export function ListaLotes({ onSubir, onVerEnBandeja, onOpenDashboard }) {
         </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

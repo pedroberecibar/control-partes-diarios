@@ -62,8 +62,10 @@ TRAZAS_OK = [
     "Corregido Sumi",
     "Corregido Medidor Vacio",
 ]
-TRAZAS_OCR = [
+TRAZAS_REVISION = [
     "Corregido Sumi Nro EQP",
+    "Rescatado por Oracle",
+    "Múltiples Candidatos Oracle",
 ]
 TRAZAS_RECHAZO = [
     "No Corresponde TOR CE",

@@ -10,6 +10,8 @@
     "lint": "eslint .",
     "predeploy": "npm.cmd run build",
     "deploy": "gh-pages -d dist",
+    "build:mock": "vite build --mode mock",
+    "deploy:mock": "npm run build:mock && gh-pages -d dist",
     "preview": "vite preview"
   },
   "dependencies": {

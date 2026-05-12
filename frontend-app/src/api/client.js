@@ -1,3 +1,5 @@
+import { routeMockRequest } from './mockRouter';
+
 export const BASE_URL = 'http://localhost:8000';
 
 // Placeholder hasta que haya auth real. El backend usa este header para
@@ -7,6 +9,9 @@ export const setCurrentUserId = (id) => { _currentUserId = id; };
 export const getCurrentUserId = () => _currentUserId;
 
 export async function apiFetch(path, options = {}) {
+  if (import.meta.env.VITE_USE_MOCK === 'true') {
+    return routeMockRequest(path, options);
+  }
   const { headers: extraHeaders, body, ...rest } = options;
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: {

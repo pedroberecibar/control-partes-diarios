@@ -7,13 +7,14 @@
 ### Backend
 
 ```powershell
-# Desde la raíz del proyecto
+# Primero ingresamos a la carpeta del backend
+cd python-version
+
+# Activamos el entorno virtual específico del backend
 .\venv\Scripts\activate
 
-cd python-version
+# Instalamos dependencias y preparamos la base de datos
 pip install -r requirements.txt
-
-# Crear / migrar la base de datos SQLite
 alembic upgrade head
 ```
 
@@ -21,6 +22,7 @@ alembic upgrade head
 
 ```powershell
 cd frontend-app
+# Usamos npm.cmd en lugar de npm para evitar el bloqueo de ejecución de scripts (.ps1) de PowerShell
 npm.cmd install
 ```
 

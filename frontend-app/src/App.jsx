@@ -67,7 +67,17 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      {import.meta.env.VITE_USE_MOCK === 'true' && (
+        <div style={{
+          background: '#1e40af', color: '#fff',
+          padding: '5px 16px', fontSize: 11.5, textAlign: 'center', fontWeight: 600,
+          flexShrink: 0, letterSpacing: 0.2,
+        }}>
+          Modo Portafolio — datos ficticios de demostración · sin conexión a base de datos
+        </div>
+      )}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       <Sidebar
         activeScreen={screen}
         onNav={handleNav}
@@ -96,6 +106,7 @@ export default function App() {
           {screen === 'mapeo'      && <MapeoCodigosAdmin />}
           {screen === 'usuarios'   && <UsuariosRolesAdmin />}
         </div>
+      </div>
       </div>
       <Toast toasts={toasts} onRemove={removeToast} />
     </div>

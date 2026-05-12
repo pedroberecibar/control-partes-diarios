@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { PARTES } from '../data/partesMock';
+import { PARTES_DATA } from '../data/partesMock';
 
 function seededSparkline(name, weeks = 8) {
   const seed = name.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
@@ -61,16 +61,16 @@ export function DashboardOperarios() {
 
   const operStats = useMemo(() => {
     const map = {};
-    PARTES.forEach((p) => {
-      if (!map[p.operario]) {
-        map[p.operario] = { operario: p.operario, contr: p.contratista, total: 0, ok: 0, corr: 0, rech: 0, pend: 0 };
+    PARTES_DATA.forEach((p) => {
+      if (!map[p.operario_nombre]) {
+        map[p.operario_nombre] = { operario: p.operario_nombre, contr: p.contratista, total: 0, ok: 0, corr: 0, rech: 0, pend: 0 };
       }
-      const o = map[p.operario];
+      const o = map[p.operario_nombre];
       o.total++;
-      if (p.traza === 'Original OK') o.ok++;
-      if (p.traza === 'Corregido Medidor' || p.traza === 'Corregido Orden') o.corr++;
-      if (p.estado === 'Rechazado') o.rech++;
-      if (p.estado === 'Pendiente' || p.estado === 'En Revisión') o.pend++;
+      if (p.id_traza === 1) o.ok++;
+      if (p.fue_corregido) o.corr++;
+      if (p.id_estado === 3) o.rech++;
+      if (p.id_estado === 2) o.pend++;
     });
     return Object.values(map).map((o) => ({
       ...o,

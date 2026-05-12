@@ -2,33 +2,34 @@ import { useEffect, useState } from 'react';
 import { Icon, LOTE_ESTADO_CONFIG, StatusChip } from '../components/Icon';
 import { getLote, getLoteDashboard } from '../api/lotesApi';
 
-// ── Donut: Directo vs. Corregido ──────────────────────────────────────────
-function DonutAprobados({ directo, corregido }) {
-  const total = directo + corregido;
+// ── Donut genérico: N segmentos proporcionales ────────────────────────────
+function DonutDistribucion({ data, estadoLabel }) {
+  const total = data.reduce((s, d) => s + d.count, 0);
   if (total === 0) return <div style={{ color: '#8f9c97', fontSize: 12 }}>Sin datos</div>;
   const r = 38, cx = 60, cy = 60, sw = 14;
   const circ = 2 * Math.PI * r;
-  const arcD = (directo / total) * circ;
-  const pctD = Math.round((directo / total) * 100);
+  let accumulated = 0;
   return (
-    <svg width={120} height={120}>
+    <svg width={120} height={120} style={{ flexShrink: 0 }}>
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e0e7e4" strokeWidth={sw} />
-      {corregido > 0 && (
-        <circle
-          cx={cx} cy={cy} r={r} fill="none" stroke="#a8d5b8" strokeWidth={sw}
-          strokeDasharray={`${circ - arcD} ${arcD}`}
-          style={{ transform: `rotate(${-90 + (directo / total) * 360}deg)`, transformOrigin: `${cx}px ${cy}px` }}
-        />
-      )}
-      {directo > 0 && (
-        <circle
-          cx={cx} cy={cy} r={r} fill="none" stroke="#1d8348" strokeWidth={sw}
-          strokeDasharray={`${arcD} ${circ - arcD}`}
-          style={{ transform: 'rotate(-90deg)', transformOrigin: `${cx}px ${cy}px` }}
-        />
-      )}
-      <text x={cx} y={cy - 5} textAnchor="middle" fontSize="14" fontWeight="700" fill="#111614">{pctD}%</text>
-      <text x={cx} y={cy + 10} textAnchor="middle" fontSize="9" fill="#8f9c97">directo</text>
+      {data.map((seg, i) => {
+        const arc = (seg.count / total) * circ;
+        const angle = (accumulated / circ) * 360 - 90;
+        accumulated += arc;
+        return (
+          <circle key={i} cx={cx} cy={cy} r={r} fill="none"
+            stroke={seg.color} strokeWidth={sw}
+            strokeDasharray={`${arc} ${circ - arc}`}
+            style={{ transform: `rotate(${angle}deg)`, transformOrigin: `${cx}px ${cy}px` }}
+          />
+        );
+      })}
+      <text x={cx} y={cy - 4} textAnchor="middle" fontSize="11" fontWeight="700" fill="#111614">
+        {estadoLabel.split(' ')[0]}
+      </text>
+      <text x={cx} y={cy + 9} textAnchor="middle" fontSize="9" fill="#8f9c97">
+        {total.toLocaleString()}
+      </text>
     </svg>
   );
 }
@@ -61,11 +62,25 @@ const ESTADO_CHIP = {
   'Fuera Alcance': { color: '#5b4a00', bg: '#fef9e7' },
 };
 
-// ── Trazas clasificadas para el análisis de errores ──────────────────────
-const TRAZAS_ERRORES_CORREGIDOS = new Set([2, 3, 4, 5, 12, 19]); // aprobados con corrección automática (19=Rescatado por Oracle)
-const TRAZAS_ERRORES_RECHAZADOS = new Set([7, 8, 9, 15, 17]);    // rechazados por error irrecuperable (7=Sin Orden Asociada)
-const TRAZAS_FUERA_ALCANCE      = new Set([6, 10, 11, 13]);      // fuera de alcance estructural/operativo
-const TRAZAS_SISTEMICOS         = new Set([16, 18]);             // duplicados en lote / sistema
+// ── Trazas clasificadas por Estado de Proceso (1:1 con backend) ──────────
+const TRAZAS_APROBADO      = new Set([1, 2, 3, 4, 12]);
+const TRAZAS_REVISION      = new Set([5, 19, 20]);
+const TRAZAS_RECHAZADO     = new Set([7, 8, 9, 10, 13, 14, 15, 16, 17, 18]);
+const TRAZAS_FUERA_ALCANCE = new Set([6, 11]);
+
+// ── Mapeo estado → set y paleta cromática ────────────────────────────────
+const SET_POR_ESTADO = {
+  'Aprobado':         TRAZAS_APROBADO,
+  'Revisión':         TRAZAS_REVISION,
+  'Rechazado':        TRAZAS_RECHAZADO,
+  'Fuera de Alcance': TRAZAS_FUERA_ALCANCE,
+};
+const PALETAS = {
+  'Aprobado':         ['#1d8348', '#27ae60', '#52be80', '#82e0aa', '#a9dfbf'],
+  'Revisión':         ['#e6910a', '#f0b429', '#f9cc70'],
+  'Rechazado':        ['#922b21', '#c0392b', '#e74c3c', '#ec7063', '#f1948a'],
+  'Fuera de Alcance': ['#5b4a00', '#b7950b'],
+};
 
 function formatFecha(iso) {
   if (!iso) return '—';
@@ -119,6 +134,7 @@ export function DetalleLote({ loteId, onBack }) {
   const [dash, setDash]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
+  const [estadoSeleccionado, setEstadoSeleccionado] = useState('Aprobado');
 
   useEffect(() => {
     if (!loteId) return;
@@ -144,16 +160,35 @@ export function DetalleLote({ loteId, onBack }) {
 
   const ec = LOTE_ESTADO_CONFIG[lote.estado] || {};
 
-  // Conteos para el análisis de errores de carga y descartados
-  let cntErroresCorr = 0, cntErroresRech = 0, cntFueraAlcance = 0, cntSistemicos = 0;
+  // Conteos por Estado de Proceso
+  let cntAprobado = 0, cntRevision = 0, cntRechazado = 0, cntFueraAlcance = 0;
   for (const t of dash.distribucion_trazas) {
-    if (TRAZAS_ERRORES_CORREGIDOS.has(t.id_traza))      cntErroresCorr  += t.count;
-    else if (TRAZAS_ERRORES_RECHAZADOS.has(t.id_traza)) cntErroresRech  += t.count;
-    else if (TRAZAS_FUERA_ALCANCE.has(t.id_traza))      cntFueraAlcance += t.count;
-    else if (TRAZAS_SISTEMICOS.has(t.id_traza))         cntSistemicos   += t.count;
+    if (TRAZAS_APROBADO.has(t.id_traza))           cntAprobado     += t.count;
+    else if (TRAZAS_REVISION.has(t.id_traza))      cntRevision     += t.count;
+    else if (TRAZAS_RECHAZADO.has(t.id_traza))     cntRechazado    += t.count;
+    else if (TRAZAS_FUERA_ALCANCE.has(t.id_traza)) cntFueraAlcance += t.count;
   }
-  // Denominador = total del lote (los errores corregidos son aprobados, no descartados)
   const totalBase = dash.total_registros || 1;
+
+  // Datos para la dona dinámica según estado seleccionado
+  const MAX_SLICES = 5;
+  const setActivo = SET_POR_ESTADO[estadoSeleccionado];
+  const palette   = PALETAS[estadoSeleccionado];
+  const trazasFiltradas = dash.distribucion_trazas
+    .filter(t => setActivo.has(t.id_traza) && t.count > 0)
+    .sort((a, b) => b.count - a.count);
+  let donutData;
+  if (trazasFiltradas.length <= MAX_SLICES) {
+    donutData = trazasFiltradas.map((t, i) => ({ label: t.desc_traza, count: t.count, color: palette[i % palette.length] }));
+  } else {
+    const top  = trazasFiltradas.slice(0, MAX_SLICES - 1);
+    const rest = trazasFiltradas.slice(MAX_SLICES - 1);
+    donutData  = [
+      ...top.map((t, i) => ({ label: t.desc_traza, count: t.count, color: palette[i] })),
+      { label: 'Otras', count: rest.reduce((s, t) => s + t.count, 0), color: '#b0bab6' },
+    ];
+  }
+  const donutTotal = donutData.reduce((s, d) => s + d.count, 0);
 
   const lS = {
     root:     { padding: 20, overflow: 'auto', height: '100%', boxSizing: 'border-box' },
@@ -256,89 +291,82 @@ export function DetalleLote({ loteId, onBack }) {
       {/* A2 + A4 — Donut aprobados / Breakdown descartados */}
       <div style={lS.twoCol}>
 
-        {/* A2 — Directo vs. Corregido algorítmico */}
+        {/* A2 — Composición del estado seleccionado (dona dinámica) */}
         <Card>
-          <div style={lS.cardLbl}>Aprobados: Directo vs. Corregido Algorítmico</div>
+          <div style={lS.cardLbl}>{'Composición: ' + estadoSeleccionado.toUpperCase()}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-            <DonutAprobados directo={dash.aprobados_directo} corregido={dash.aprobados_corregidos} />
-            <div style={{ flex: 1 }}>
-              {[
-                {
-                  label: 'Original OK',
-                  value: dash.aprobados_directo,
-                  color: '#1d8348',
-                  desc: 'Sin intervención del motor',
-                },
-                {
-                  label: 'Corregidos',
-                  value: dash.aprobados_corregidos,
-                  color: '#e6910a',
-                  desc: 'Medidores/suministro ajustados automáticamente',
-                },
-              ].map((row) => (
-                <div key={row.label} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, marginBottom: 12 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: 2, background: row.color, flexShrink: 0, marginTop: 2 }} />
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: '#2f3733' }}>
-                      {row.label}{' '}
-                      <span style={{ fontFamily: "'JetBrains Mono', monospace", color: row.color }}>
-                        {row.value.toLocaleString()}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 10, color: '#8f9c97' }}>{row.desc}</div>
-                  </div>
-                </div>
-              ))}
-              {dash.n_aprobados === 0 && (
-                <div style={{ fontSize: 11, color: '#8f9c97', fontStyle: 'italic' }}>Sin aprobados</div>
-              )}
+            <DonutDistribucion data={donutData} estadoLabel={estadoSeleccionado} />
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              {donutData.length === 0
+                ? <div style={{ fontSize: 11, color: '#8f9c97', fontStyle: 'italic' }}>Sin datos para este estado</div>
+                : donutData.map((seg) => {
+                    const pct = Math.round((seg.count / (donutTotal || 1)) * 100);
+                    return (
+                      <div key={seg.label} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 9 }}>
+                        <div style={{ width: 10, height: 10, borderRadius: 2, background: seg.color, flexShrink: 0, marginTop: 2 }} />
+                        <div style={{ overflow: 'hidden' }}>
+                          <div style={{ fontSize: 10.5, fontWeight: 600, color: '#2f3733', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {seg.label}{' '}
+                            <span style={{ fontFamily: "'JetBrains Mono', monospace", color: seg.color }}>
+                              {seg.count.toLocaleString()}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 9.5, color: '#8f9c97' }}>{pct}%</div>
+                        </div>
+                      </div>
+                    );
+                  })
+              }
             </div>
           </div>
         </Card>
 
-        {/* A4 — Análisis de errores de carga y descartados */}
+        {/* A4 — Distribución por Estados de Proceso */}
         <Card>
-          <div style={lS.cardLbl}>Análisis de Errores de Carga y Descartados</div>
+          <div style={lS.cardLbl}>Distribución por Estados de Proceso</div>
           {[
             {
-              label: 'Errores corregidos por el motor',
-              count: cntErroresCorr,
-              desc:  'Medidores invertidos, sumi/medidor ajustado — registros aprobados (trazas 2,3,4,5,12)',
-              color: '#e6910a',
+              label: 'Aprobado',
+              count: cntAprobado,
+              desc:  'Original OK + corregidos automáticamente (trazas 1,2,3,4,12)',
+              color: '#155a2e',
+              bg:    '#edf5f0',
+            },
+            {
+              label: 'Revisión',
+              count: cntRevision,
+              desc:  'Requieren verificación humana antes de aprobar (trazas 5,19,20)',
+              color: '#7a4a00',
               bg:    '#fff8eb',
             },
             {
-              label: 'Errores no recuperables',
-              count: cntErroresRech,
-              desc:  'Sumi erróneo, fecha inválida, datos faltantes — registros rechazados (trazas 8,9,15,17)',
-              color: '#c0392b',
+              label: 'Rechazado',
+              count: cntRechazado,
+              desc:  'No pagables: sin orden, datos inválidos, duplicados (trazas 7,8,9,10,13,14,15,16,17,18)',
+              color: '#7a1c1c',
               bg:    '#fdf1f0',
             },
             {
-              label: 'Fuera de alcance estructural',
+              label: 'Fuera de Alcance',
               count: cntFueraAlcance,
-              desc:  'No es TOR CE, otro origen — fuera del contrato (trazas 6,11)',
+              desc:  'No corresponden al contrato TOR CE actual (trazas 6,11)',
               color: '#5b4a00',
               bg:    '#fef9e7',
             },
-            {
-              label: 'Duplicados en lote / sistema',
-              count: cntSistemicos,
-              desc:  'Duplicados exactos o ya procesados en lote anterior (trazas 16,18)',
-              color: '#1565c0',
-              bg:    '#dbeafe',
-            },
-            {
-              label: 'Revisión OCR pendiente',
-              count: dash.n_revision,
-              desc:  'Requieren verificación manual antes de aprobar',
-              color: '#7a4a00',
-              bg:    '#fff3cd',
-            },
           ].map((row) => {
-            const pct = Math.round((row.count / totalBase) * 100);
+            const pct    = Math.round((row.count / totalBase) * 100);
+            const activa = estadoSeleccionado === row.label;
             return (
-              <div key={row.label} style={{ marginBottom: 10 }}>
+              <div
+                key={row.label}
+                onClick={() => setEstadoSeleccionado(row.label)}
+                style={{
+                  marginBottom: 6, cursor: 'pointer', borderRadius: 4, padding: '4px 6px',
+                  borderLeft: `3px solid ${activa ? row.color : 'transparent'}`,
+                  background: activa ? row.bg : 'transparent',
+                  transition: 'background 0.15s',
+                }}
+              >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
                   <span style={{ fontSize: 11, fontWeight: 600, color: '#2f3733' }}>{row.label}</span>
                   <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", padding: '1px 5px', borderRadius: 3, background: row.bg, color: row.color, fontWeight: 700 }}>

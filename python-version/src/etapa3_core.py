@@ -804,7 +804,7 @@ def normalizar_a_fact_schema(
     # 1. ID_ESTADO + ESTADO_PROCESO + es_pagable
     cond_estado = [
         df["TRAZA_CALIDAD"].isin(config.TRAZAS_OK),
-        df["TRAZA_CALIDAD"].isin(config.TRAZAS_OCR),
+        df["TRAZA_CALIDAD"].isin(config.TRAZAS_REVISION),
         df["TRAZA_CALIDAD"].isin(["No Corresponde TOR CE", "Otro Origen"]),
     ]
     choice_estado = [1, 2, 4]
