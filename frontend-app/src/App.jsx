@@ -3,6 +3,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Toast } from './components/Toast';
 import { TopBar } from './components/layout/TopBar';
 import { MODULE_DEFAULT_SCREEN, ROLE_ACCESS, ROLE_LABELS, SCREEN_META, SCREEN_TO_MODULE } from './data/nav';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { BandejaAuditoria } from './pages/BandejaAuditoria';
 import { CentroExports } from './pages/CentroExports';
 import { DashboardCalidad } from './pages/DashboardCalidad';
@@ -93,7 +94,7 @@ export default function App() {
           onRoleChange={handleRoleChange}
         />
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {screen === 'bandeja'    && <BandejaAuditoria onOpenDetalle={handleOpenDetalle} initialLoteId={activeLoteId} />}
+          {screen === 'bandeja'    && <ErrorBoundary><BandejaAuditoria onOpenDetalle={handleOpenDetalle} initialLoteId={activeLoteId} /></ErrorBoundary>}
           {screen === 'detalle'    && <DetallePartes parte={activeParte} onBack={() => setScreen('bandeja')} />}
           {screen === 'lotes'      && <ListaLotes onSubir={() => setScreen('subida')} onVerEnBandeja={handleVerEnBandeja} onOpenDashboard={handleOpenDashboardLote} />}
           {screen === 'detalle-lote' && <DetalleLote loteId={activeLoteId} onBack={() => setScreen('lotes')} />}

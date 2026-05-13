@@ -151,9 +151,12 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   function toggleFilter(key, id) {
+    console.log('[BandejaAuditoria] toggleFilter →', key, id);
     setFilters((f) => {
       const arr = f[key] ?? [];
-      return { ...f, [key]: arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id] };
+      const next = { ...f, [key]: arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id] };
+      console.log('[BandejaAuditoria] filtros post-toggle →', next);
+      return next;
     });
     setPage(1);
   }
@@ -188,7 +191,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
   const someSelected = selectedIds.size > 0;
 
   const activeFilterCount =
-    filters.id_trazas.length + filters.id_estados.length + filters.contratista_ids.length + (filters.lote_ids?.length ?? 0) + (filters.cod_epec_ids?.length ?? 0);
+    (filters.id_trazas?.length || 0) + (filters.id_estados?.length || 0) + (filters.contratista_ids?.length || 0) + (filters.lote_ids?.length || 0) + (filters.cod_epec_ids?.length || 0);
 
   const bS = {
     root: { display: 'flex', height: '100%', overflow: 'hidden', background: '#f5f7f6' },
@@ -232,6 +235,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
     actionBtn: { border: 'none', background: 'transparent', cursor: 'pointer', color: '#8f9c97', display: 'inline-flex', alignItems: 'center', padding: '3px', borderRadius: 3 },
   };
 
+  console.log('[BandejaAuditoria] render — FILTROS ACTUALES:', filters, '| partes:', partes.length, '| loading:', loading);
   return (
     <div style={bS.root}>
       <div style={bS.filterSidebar}>
@@ -250,7 +254,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Traza Calidad</div>
           {TRAZAS_OPCIONES.map((t) => {
-            const active = filters.id_trazas.includes(t.id);
+            const active = (filters.id_trazas || []).includes(t.id);
             return (
               <div
                 key={t.id}
@@ -267,7 +271,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Estado</div>
           {ESTADOS_OPCIONES.map((e) => {
-            const active = filters.id_estados.includes(e.id);
+            const active = (filters.id_estados || []).includes(e.id);
             return (
               <div
                 key={e.id}
@@ -284,7 +288,7 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
         <div style={bS.filterSection}>
           <div style={bS.filterSectionLabel}>Contratista</div>
           {CONTRATISTAS_OPCIONES.map((c) => {
-            const active = filters.contratista_ids.includes(c.id);
+            const active = (filters.contratista_ids || []).includes(c.id);
             return (
               <div
                 key={c.id}
@@ -407,9 +411,9 @@ export function BandejaAuditoria({ onOpenDetalle, initialLoteId }) {
           )}
           {!loading && partes.length === 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: 8 }}>
-              <Icon name={usingMock ? 'alert-circle' : 'inbox'} size={28} color="#d5ddd9" />
+              <Icon name={error ? 'alert-circle' : 'inbox'} size={28} color="#d5ddd9" />
               <span style={{ fontSize: 13, color: '#8f9c97' }}>
-                {usingMock
+                {error
                   ? 'No se pudo conectar al backend.'
                   : activeFilterCount > 0 || filters.search
                     ? 'No hay partes que coincidan con los filtros activos.'

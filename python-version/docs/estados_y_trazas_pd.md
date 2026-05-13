@@ -18,9 +18,11 @@ Partes que han superado con éxito las validaciones del motor y se consideran **
 ---
 
 ## 🟡 ESTADO: Revisión (ID: 2)
-Partes que pudieron ser rescatados o corregidos parcialmente por el motor, pero la corrección no es 100% segura. Requieren **verificación humana** (auditoría visual de fotos/OCR) [LO DE LA VERIFICACION MEDIANTE OCR NO SE IMPLEMENTO, BORRAR ESTO DEL PROYECTO, DEJANDO SOLAMENTE QUE REQUIERE REVISION HUMANA] antes de pasar a Aprobado o Rechazado.
+Partes que pudieron ser rescatados o corregidos parcialmente por el motor, pero la corrección no es 100% segura. Requieren **verificación humana** antes de pasar a Aprobado o Rechazado.
 
-*   **Corregido Sumi Nro EQP (Traza 5):** Tanto el suministro como los medidores declarados eran incorrectos o no cuadraban de forma directa, pero el motor logró inferir un candidato en base a cruces indirectos. Al tener alta probabilidad de error humano, se bloquea el pago hasta que un auditor vea la foto del frente del medidor.
+*   **Corregido Sumi Nro EQP (Traza 5):** Tanto el suministro como los medidores declarados eran incorrectos o no cuadraban de forma directa, pero el motor logró inferir un candidato en base a cruces indirectos. Al tener alta probabilidad de error humano, se bloquea el pago hasta que un auditor valide la foto del medidor.
+*   **Rescatado por Oracle (Traza 19):** El motor logró encontrar un match usando heurísticas muy forzadas (como tolerancias de fecha extremas o cruces difusos en la DB), pero la regla de negocio requiere revisión humana obligatoria.
+*   **Múltiples Candidatos Oracle (Traza 20):** La consulta arrojó múltiples órdenes idénticas para el mismo suministro en el mismo día y el motor no puede desambiguar con certeza cuál se está rindiendo, requiriendo intervención manual.
 
 ---
 
@@ -42,9 +44,7 @@ Partes que **no son pagables**. Contienen errores críticos, son duplicados sist
 *   **Informado - No Ejecutado (Traza 13):** La orden existe en Oracle, pero su resultado oficial es "IN" (Incompleto / No Ejecutado). La contratista no puede cobrar un trabajo que figura como fallido.
 *   **Código de Tarea No Mapeado (Traza 14):** El código operativo reportado por el contratista en el Excel (ej. "MT-04") no existe en el archivo maestro de conversiones EPEC.
 *   **Fecha Inválida (Traza 15):** La fecha de ejecución reportada no es una fecha válida o cae muy fuera de la ventana operativa lógica del lote.
-*   **Datos Clave Faltantes (Traza 17):** Faltan datos estructurales en la fila del Excel (ej. operario en blanco, campos obligatorios vacíos) impidiendo siquiera intentar el cruce. [EL OPERARIO PUEDE VENIR EN BLANCO, EL RESTO DE CAMPOS OBLIGATORIOS NO]
-*   **Rescatado por Oracle (Traza 19):** El motor logró encontrar un match usando heurísticas muy forzadas (como tolerancias de fecha extremas o cruces difusos en la DB), pero la regla de negocio actual lo desestima para pago automático. [ESTO DEBERIA IR AL ESTADO "EN REVISION"]
-*   **Múltiples Candidatos Oracle (Traza 20):** La consulta arrojó múltiples órdenes idénticas para el mismo suministro en el mismo día y el motor no puede desambiguar con certeza cuál se está rindiendo. [ESTO DEBERIA IR AL ESTADO "EN REVISION"]
+*   **Datos Clave Faltantes (Traza 17):** Faltan datos estructurales en la fila del Excel (ej. campos obligatorios como suministro, medidor o fecha en blanco) impidiendo siquiera intentar el cruce. Nota: El campo operario es opcional y puede venir en blanco.
 
 ### Errores Sistémicos y Duplicados
 *   **Informados con ORD-SUMI aprobado (Traza 10):** *Duplicado de negocio (Repetido por Suministro)*. Dentro del mismo lote, se reportó varias veces el mismo suministro/medidor. El motor ya aprobó a la "mejor" fila candidata, por lo que esta fila se descarta para evitar pagar dos veces la misma orden.
@@ -53,18 +53,6 @@ Partes que **no son pagables**. Contienen errores críticos, son duplicados sist
 
 ---
 
-## ⚠️ Discrepancias Detectadas con el Frontend
+## ✅ Sincronización Backend/Frontend Completada
 
-Actualmente existe una **desincronización** entre la lógica oficial documentada arriba (Backend) y cómo la interfaz web (`DetalleLote.jsx`) clasifica y suma estas trazas en el Dashboard.
-
-1. **La Traza 5 (Corregido Sumi Nro EQP):**
-   * **El Backend** la envía al estado `Revisión` para validación humana.
-   * **El Frontend** la está sumando dentro del conjunto `TRAZAS_ERRORES_CORREGIDOS`, asumiendo erróneamente que es un registro Aprobado que fue corregido automáticamente. [TIENE QUE QUEDAR EN REVISION]
-2. **La Traza 19 (Rescatado por Oracle):**
-   * **El Backend** la envía al estado `Rechazado` por defecto, ya que no se encuentra listada en `TRAZAS_OK` de la configuración.
-   * **El Frontend** también la incluye dentro de `TRAZAS_ERRORES_CORREGIDOS`, mostrándola visualmente como si estuviera Aprobada. [TIENE QUE QUEDAR EN REVISION]
-3. **Las Trazas 10 y 13 (Informados con ORD-SUMI aprobado / No Ejecutado):**
-   * **El Backend** las mapea a `Rechazado` al considerarlas descartes operativos y sistémicos.
-   * **El Frontend** las agrupa bajo el conjunto `TRAZAS_FUERA_ALCANCE`, cuando en realidad las únicas fuera de alcance son la 6 y la 11. [TIENE QUE QUEDAR EN RECHAZADO]
-
-Esta desincronización es el origen de las confusiones en los totales y tarjetas del dashboard, ya que matemáticamente el dashboard está mezclando estados lógicos. Se recomienda definir la regla de negocio definitiva y luego alinear el archivo `DetalleLote.jsx` (variables `TRAZAS_*`) con el archivo `config.py` del backend.
+La lógica documentada arriba es ahora la **fuente de verdad unificada**. Anteriormente existían discrepancias donde el frontend agrupaba ciertas trazas (5, 10, 13, 19, 20) en categorías incorrectas, pero tras la última refactorización, los 4 estados principales (Aprobado, Revisión, Rechazado y Fuera de Alcance) están completamente alineados tanto en el motor de clasificación del backend (`config.py`) como en la visualización del dashboard web (`DetalleLote.jsx` y mocks de UI).

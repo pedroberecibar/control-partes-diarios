@@ -85,7 +85,9 @@ export async function routeMockRequest(path, _options = {}) {
     const qs    = new URLSearchParams(queryStr || '');
     const skip  = Number(qs.get('skip')  || 0);
     const limit = Number(qs.get('limit') || 25);
-    return { items: PARTES_DATA.slice(skip, skip + limit), total: PARTES_DATA.length };
+    const result = { items: PARTES_DATA.slice(skip, skip + limit), total: PARTES_DATA.length };
+    console.log('[mockRouter] /partes → skip:', skip, 'limit:', limit, 'items:', result.items.length);
+    return result;
   }
 
   if (clean === '/api/v1/partes/cod-epec/valores') {

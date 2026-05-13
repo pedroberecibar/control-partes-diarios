@@ -10,6 +10,7 @@ export function getPartes(params = {}) {
       qs.append(k, v);
     }
   }
+  console.log('[partesApi] getPartes → params:', params, '| qs:', qs.toString());
   return apiFetch(`/api/v1/partes/?${qs}`);
 }
 
