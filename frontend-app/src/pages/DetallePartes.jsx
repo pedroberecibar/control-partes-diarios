@@ -346,7 +346,8 @@ export function DetallePartes({ parte, onBack }) {
     const motivo_final = obsExtra ? `${motivo_base} — Obs auditor: ${obsExtra}` : motivo_base;
 
     const payload = {
-      cod_epec:   m.cod_epec,
+      cod_epec:          m.cod_epec,
+      cod_epec_sugerido: m.cod_epec,   // permite re-asociar mismo código con menor Hamming
       motivo:     motivo_final,
       usuario_id: USUARIO_ID_DEFAULT,
       version:    p.version ?? 1,
