@@ -89,6 +89,7 @@ class ParteDetalleResponse(BaseModel):
     # Cruces y resultados
     ord_nro: Optional[int] = None
     cod_epec: Optional[int] = None
+    codigo_contratista: Optional[str] = None
     id_estado: int
     estado: Optional[str] = None
     id_traza: int
@@ -145,6 +146,7 @@ class ParteEditRequest(BaseModel):
     nro_medidor_colocado: Optional[str] = None
     ord_nro: Optional[int] = None
     cod_epec: Optional[int] = None
+    cod_epec_sugerido: Optional[int] = None
     id_estado: Optional[int] = Field(None, ge=1, le=4, description="1:Aprobado, 2:Revisión, 3:Rechazado, 4:Fuera de Alcance")
     id_traza: Optional[int] = Field(None, ge=1, description="FK lógica → dim_traza_calidad_bi")
 

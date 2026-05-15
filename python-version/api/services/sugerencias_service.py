@@ -38,8 +38,8 @@ class SugerenciasService:
         parte = self.db.get(ParteDiarioProcesado, parte_id)
         if parte is None:
             raise ValueError(f"Parte id={parte_id} no existe.")
-        if parte.id_estado != 1:
-            raise ValueError("Sugerencias disponibles solo para partes Aprobados.")
+        if parte.id_estado not in (1, 2):
+            raise ValueError("Sugerencias disponibles solo para partes Aprobados o en Revisión.")
 
         # Vector 1×8 de obs del operario en orden config.OBS_COLS.
         # Usamos _OBS_FIELDS (orm_field, col_reglas) porque el lower-case
@@ -56,6 +56,19 @@ class SugerenciasService:
         dists = hamming_helper.hamming_matrix(obs_vec[None, :], regla_mat)[0]   # shape (M,)
         sin_obs = bool(obs_vec.sum() == 0)
 
+        # USES del cod_epec declarado por el contratista (vía mapeo CODIGO_CONTRATISTA → CODIGO_EPEC).
+        # None si el parte no tiene cod_epec mapeado — en ese caso no se puede determinar valoración.
+        uses_origen = parte.valor_uses_origen
+
+        def _valoracion(candidato_uses: float) -> str | None:
+            if uses_origen is None:
+                return None
+            if candidato_uses > uses_origen:
+                return "subvaluacion"      # contratista cobró de menos
+            if candidato_uses < uses_origen:
+                return "sobrevaluacion"    # contratista cobró de más
+            return "equivalente"
+
         todas: list[CandidatoEpecDTO] = [
             CandidatoEpecDTO(
                 cod_epec=int(row.COD_EPEC),
@@ -64,6 +77,7 @@ class SugerenciasService:
                 score=8 - int(dists[i]),
                 valor_uses=float(row.VALOR_USES),
                 campos_diferentes=hamming_helper.campos_diferentes(obs_vec, regla_mat[i]),
+                valoracion=_valoracion(float(row.VALOR_USES)),
             )
             for i, row in enumerate(df_reglas.itertuples(index=False))
         ]

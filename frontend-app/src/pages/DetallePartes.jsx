@@ -24,6 +24,13 @@ const TRAZAS_CRUCE_B = new Set(['No Corresponde TOR CE']);
 // Trazas que indican rescate en Cruce C (suministro corregido por medidor)
 const TRAZAS_CRUCE_C = new Set(['Corregido Sumi', 'Corregido Sumi Nro EQP']);
 
+// Paleta para el badge de valoración de cada candidato EPEC (USES candidato vs USES declarado).
+const VALORACION_CONFIG = {
+  subvaluacion:   { label: 'Subvaluación',   bg: '#d4edda', color: '#155a2e', border: '#a8d9c0' },
+  sobrevaluacion: { label: 'Sobrevaluación', bg: '#fde8e8', color: '#7a1c1c', border: '#f5b7b1' },
+  equivalente:    { label: 'Equivalente',    bg: '#eaeeec', color: '#4a5550', border: '#cfd4d2' },
+};
+
 function buildCruces(p) {
   const traza = p.traza || '';
 
@@ -192,9 +199,9 @@ export function DetallePartes({ parte, onBack }) {
     }
   }, [editFields.cod_epec, editFields.cod_epec_desc, opcionesCodEpec]);
 
-  // Cargar candidatos cuando el parte es Aprobado (id_estado=1) y tiene id real.
+  // Cargar candidatos cuando el parte es Aprobado o Revisión (id_estado ∈ {1, 2}) y tiene id real.
   useEffect(() => {
-    if (typeof p.id !== 'number' || p.id_estado !== 1) {
+    if (typeof p.id !== 'number' || ![1, 2].includes(p.id_estado)) {
       setCandidatosEpec(null);
       setCandidatosEpecError(null);
       return;
@@ -587,6 +594,7 @@ export function DetallePartes({ parte, onBack }) {
                     ['Contratista',       p.contratista],
                     ['Medidor Retirado',  p.nro_medidor_retirado || p.medidor_dec || '—'],
                     ['Medidor Colocado',  p.nro_medidor_colocado || p.medidor_dec || '—'],
+                    ['COD Contratista',   p.codigo_contratista || '—'],
                     ['COD_EPEC Dec.',     p.cod_epec],
                     ['ORD_NRO Dec.',      p.ord_nro],
                     ['USES (origen)',     p.valor_uses_origen != null ? p.valor_uses_origen : p.uses],
@@ -602,8 +610,8 @@ export function DetallePartes({ parte, onBack }) {
                 </div>
               </div>
 
-              {/* Observaciones del Operario — solo para Aprobados (pasaron por Etapa 4) */}
-              {p.id_estado === 1 && (
+              {/* Observaciones del Operario — Aprobados o Revisión con ord_nro (pasaron por Etapa 4) */}
+              {[1, 2].includes(p.id_estado) && (
                 <div style={dS.section}>
                   <div style={dS.sectionHeader}>
                     <Icon name="clipboard" size={14} color="#6b7772" />
@@ -640,7 +648,7 @@ export function DetallePartes({ parte, onBack }) {
               )}
 
               {/* Códigos EPEC Candidatos — sugerencias por similitud Hamming con obs del operario */}
-              {p.id_estado === 1 && p.observaciones_app && (
+              {[1, 2].includes(p.id_estado) && p.observaciones_app && (
                 <div style={dS.section}>
                   <div style={dS.sectionHeader}>
                     <Icon name="zap" size={14} color="#6b7772" />
@@ -682,9 +690,15 @@ export function DetallePartes({ parte, onBack }) {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                               {candidatosEpec.match_exacto.map((cand, idx) => {
                                 const asignado = p.cod_epec === cand.cod_epec;
+                                const valCfg = cand.valoracion ? VALORACION_CONFIG[cand.valoracion] : null;
                                 return (
                                   <div key={`exact-${idx}`} style={{ padding: '8px 12px', border: '1px solid #a8d9c0', borderRadius: 4, background: '#edf5f0', display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: '#124e2f', minWidth: 40 }}>{cand.cod_epec}</div>
+                                    {valCfg && (
+                                      <span style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 3, background: valCfg.bg, color: valCfg.color, border: `1px solid ${valCfg.border}`, whiteSpace: 'nowrap' }}>
+                                        {valCfg.label}
+                                      </span>
+                                    )}
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div style={{ fontSize: 12, fontWeight: 600, color: '#2f3733', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cand.descripcion}</div>
                                       <div style={{ fontSize: 10.5, color: '#6b7772', marginTop: 2 }}>
@@ -719,9 +733,15 @@ export function DetallePartes({ parte, onBack }) {
                               {candidatosEpec.cercanos.map((cand, idx) => {
                                 const asignado = p.cod_epec === cand.cod_epec;
                                 const fuerte = cand.hamming >= 2;
+                                const valCfg = cand.valoracion ? VALORACION_CONFIG[cand.valoracion] : null;
                                 return (
                                   <div key={`near-${idx}`} style={{ padding: '8px 12px', border: '1px solid #f0d080', borderRadius: 4, background: '#fff8e7', display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: '#7a4a00', minWidth: 40 }}>{cand.cod_epec}</div>
+                                    {valCfg && (
+                                      <span style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 3, background: valCfg.bg, color: valCfg.color, border: `1px solid ${valCfg.border}`, whiteSpace: 'nowrap' }}>
+                                        {valCfg.label}
+                                      </span>
+                                    )}
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div style={{ fontSize: 12, fontWeight: 600, color: '#2f3733', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cand.descripcion}</div>
                                       <div style={{ fontSize: 10.5, color: '#6b7772', marginTop: 2 }}>

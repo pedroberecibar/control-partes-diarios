@@ -67,16 +67,10 @@ TRAZAS_REVISION = [
     "Rescatado por Oracle",
     "Múltiples Candidatos Oracle",
 ]
-TRAZAS_RECHAZO = [
-    "No Corresponde TOR CE",
-    "Sin Orden Asociada",
-    "Error Sumi Sin Nro Medidor",
-    "Error Sumi Y Nro Medidor",
-    "Informados con ORD-SUMI aprobado",
-    "Informado - No Ejecutado",
-    "Otro Origen",
-    "Fecha Inválida",
-    "Código de Tarea No Mapeado",
+TRAZAS_FUERA_ALCANCE = [
+    "No Corresponde TOR CE",   # Traza 6
+    "Otro Origen",             # Traza 11
+    "Código de Tarea No Mapeado",  # Traza 14
 ]
 TRAZAS_DESCARTE_TECNICO = [
     "No Corresponde TOR CE",
@@ -86,6 +80,7 @@ TRAZAS_DESCARTE_TECNICO = [
     "Otro Origen",
     "Fecha Inválida",
     "Código de Tarea No Mapeado",
+    "Registro Ya Procesado en Lote Anterior",   # Traza 18 — antiduplicidad histórica
 ]
 TRAZAS_CORRECCION_MEDIDOR = [
     "Corregido Nro EQP Invertidos",

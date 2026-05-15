@@ -201,9 +201,17 @@ class TestCodEpecEfectivo:
         row = self._row(id_estado=1, codigo_epec=None, cod_epec_sugerido=11)
         assert svc._cod_epec_efectivo(row) == 11
 
-    def test_no_aprobado_sin_epec_queda_nulo(self):
+    def test_revision_sin_epec_usa_sugerido(self):
+        # Revisión (id_estado=2) ahora pasa por etapa4 igual que Aprobado, por lo
+        # que también accede al fallback de COD_EPEC_SUGERIDO.
         svc = self._svc()
         row = self._row(id_estado=2, codigo_epec=None, cod_epec_sugerido=11)
+        assert svc._cod_epec_efectivo(row) == 11
+
+    def test_rechazado_sin_epec_queda_nulo(self):
+        # Rechazado/Fuera de Alcance no entra a etapa4 → sin sugerido aplicable.
+        svc = self._svc()
+        row = self._row(id_estado=3, codigo_epec=None, cod_epec_sugerido=11)
         assert svc._cod_epec_efectivo(row) is None
 
     def test_no_aprobado_con_epec_usa_original(self):

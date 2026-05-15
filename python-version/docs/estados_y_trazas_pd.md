@@ -27,10 +27,11 @@ Partes que pudieron ser rescatados o corregidos parcialmente por el motor, pero 
 ---
 
 ## ⚪ ESTADO: Fuera de Alcance (ID: 4)
-Partes que corresponden a órdenes de trabajo válidas pero que **no pertenecen al contrato actual de lectura y cambio de medidores** (TOR CE). 
+Partes que corresponden a órdenes de trabajo válidas pero que **no pertenecen al contrato actual de lectura y cambio de medidores** (TOR CE), o cuyo código de tarea no forma parte del alcance operativo contratado.
 
 *   **No Corresponde TOR CE (Traza 6):** La orden de trabajo existe en Oracle, pero es de otro tipo (por ejemplo: Conexiones nuevas, Cortes por morosidad, Reclamos técnicos, etc.).
 *   **Otro Origen (Traza 11):** La orden proviene de un sistema satélite u origen distinto (ej. no es PROTELEM) que está excluido del circuito de facturación automatizada actual.
+*   **Código de Tarea No Mapeado (Traza 14):** El código operativo reportado por el contratista en el Excel (ej. "MT-04") no existe en el archivo maestro de conversiones EPEC. No es un error de ejecución del operario, sino un descarte sistémico: el trabajo reportado no forma parte del alcance operativo contratado.
 
 ---
 
@@ -42,7 +43,6 @@ Partes que **no son pagables**. Contienen errores críticos, son duplicados sist
 *   **Error Sumi Sin Nro Medidor (Traza 8):** El suministro falló en el cruce de Oracle y, además, no hay número de medidor para intentar el rescate técnico inverso.
 *   **Error Sumi Y Nro Medidor (Traza 9):** Ni el suministro ni el medidor declarados existen o concuerdan con registros técnicos en los sistemas de la compañía.
 *   **Informado - No Ejecutado (Traza 13):** La orden existe en Oracle, pero su resultado oficial es "IN" (Incompleto / No Ejecutado). La contratista no puede cobrar un trabajo que figura como fallido.
-*   **Código de Tarea No Mapeado (Traza 14):** El código operativo reportado por el contratista en el Excel (ej. "MT-04") no existe en el archivo maestro de conversiones EPEC.
 *   **Fecha Inválida (Traza 15):** La fecha de ejecución reportada no es una fecha válida o cae muy fuera de la ventana operativa lógica del lote.
 *   **Datos Clave Faltantes (Traza 17):** Faltan datos estructurales en la fila del Excel (ej. campos obligatorios como suministro, medidor o fecha en blanco) impidiendo siquiera intentar el cruce. Nota: El campo operario es opcional y puede venir en blanco.
 

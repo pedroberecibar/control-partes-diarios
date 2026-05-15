@@ -96,6 +96,7 @@ class ParteService:
         "nro_medidor_colocado",
         "ord_nro",
         "cod_epec",
+        "cod_epec_sugerido",
         "id_estado",
         "id_traza",
     )
@@ -479,6 +480,7 @@ class ParteService:
             operario_excel=parte.operario_excel,
             ord_nro=parte.ord_nro,
             cod_epec=parte.cod_epec,
+            codigo_contratista=parte.codigo_contratista,
             id_estado=parte.id_estado,
             estado=dims.estado(parte.id_estado),
             id_traza=parte.id_traza,

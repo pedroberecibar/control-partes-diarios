@@ -38,12 +38,14 @@ def rank_one_by_dias(
     key: str = "_row_id",
     fecha_parte_col: str = "Fecha_Norm",
     fecha_ord_col: str = "ord_fecha_ref",
+    tolerancia: int | None = None,
 ) -> pd.DataFrame:
     """Replica `Window.partitionBy(key).orderBy(dias_diff asc) → rank == 1`.
 
     Pasos:
       1. Calcula `dias_diff = |Fecha_Norm - ord_fecha_ref|` en días.
-      2. Filtra `dias_diff <= DIAS_TOLERANCIA` (15).
+      2. Filtra `dias_diff <= tolerancia` (default: DIAS_TOLERANCIA=15;
+         cruce_C pasa RESCATE_DIAS_TOLERANCIA=7).
       3. Sort estable (`mergesort`) por (key, dias_diff, NUMERO_ORDEN) y se
          queda con la primera fila de cada `key`.
 
@@ -54,18 +56,29 @@ def rank_one_by_dias(
     if df_join.empty:
         return df_join
 
+    _tol = tolerancia if tolerancia is not None else config.DIAS_TOLERANCIA
     out = df_join.copy()
     out["dias_diff"] = (
         (out[fecha_parte_col] - out[fecha_ord_col]).dt.days.abs()
     )
-    out = out.loc[out["dias_diff"] <= config.DIAS_TOLERANCIA]
+    # Órdenes con fecha sentinel clipeada a NaT no pueden verificar ventana temporal.
+    # Se conservan como candidato de último recurso (dias_diff = _tol+1 → rank al final)
+    # y se marca el flag para que el cruce asigne Revisión en lugar de Aprobado.
+    _nat = out["dias_diff"].isna()
+    if _nat.any():
+        out.loc[_nat, "dias_diff"] = _tol + 1
+    out["_fecha_ord_nula"] = _nat
+    out = out.loc[out["dias_diff"] <= _tol + 1]
     if out.empty:
         return out
 
+    out = out.assign(_tie_id=np.arange(len(out), dtype=np.int64))
     sort_cols: list[str] = [key, "dias_diff"]
     if "NUMERO_ORDEN" in out.columns:
-        sort_cols.append("NUMERO_ORDEN")  # tie-breaker determinista
+        sort_cols.append("NUMERO_ORDEN")
+    sort_cols.append("_tie_id")   # tie-breaker absoluto: posición en el join input
     out = out.sort_values(sort_cols, kind="mergesort", na_position="last")
+    out = out.drop(columns=["_tie_id"])
     return out.drop_duplicates(subset=[key], keep="first")
 
 
@@ -340,8 +353,17 @@ def cruce_A(
 
     # 4. TRAZA_CALIDAD con np.select. El orden de las condiciones es crítico
     #    (la primera que matchea gana — igual a F.when().when()...otherwise()).
+    # _fecha_ord_nula proviene de rank_one_by_dias: la orden ganadora tenía fecha NaT.
+    # "IN" tiene mayor prioridad (orden no ejecutada sigue siendo rechazo).
+    _nat_a = df_analisis["_fecha_ord_nula"].to_numpy(dtype=bool, na_value=False) \
+        if "_fecha_ord_nula" in df_analisis.columns \
+        else np.zeros(len(df_analisis), dtype=bool)
+    if _nat_a.any():
+        log.warning("    Cruce A: %d parte(s) cruzaron con orden de fecha NaT → Rescatado por Oracle.",
+                    int(_nat_a.sum()))
     cond = [
         df_analisis["ORD_RESULTADO"] == "IN",
+        _nat_a,                               # fecha NaT: ventana no verificable → Revisión
         df_analisis["medidorColocado"].isna(),
         (df_analisis["medidorColocado"] == df_analisis["db_colocado"])
         & (df_analisis["medidorRetirado"] == df_analisis["db_retirado"]),
@@ -350,6 +372,7 @@ def cruce_A(
     ]
     choice = [
         "Informado - No Ejecutado",
+        "Rescatado por Oracle",               # match por suministro sin fecha verificada
         "Corregido Medidor Vacio",
         "Original OK",
         "Corregido Nro EQP Invertidos",
@@ -538,17 +561,26 @@ def cruce_C(
         on="_row_id", how="inner",
     )
 
-    df_con_orden = rank_one_by_dias(df_con_orden)
+    df_con_orden = rank_one_by_dias(df_con_orden, tolerancia=config.RESCATE_DIAS_TOLERANCIA)
     if df_con_orden.empty:
-        log.info("    Cruce C: 0 órdenes CE para los suministros rescatados (ventana 15d).")
+        log.info("    Cruce C: 0 órdenes CE para los suministros rescatados (ventana %dd).",
+                 config.RESCATE_DIAS_TOLERANCIA)
         return _resultado_vacio(), df_pendientes_B
 
     # ── TRAZA: si los retirados coinciden → "Corregido Sumi", sino → "Corregido Sumi Nro EQP" ──
+    # Si la orden ganadora tenía fecha NaT no se puede verificar ventana → Revisión.
+    _nat_c = df_con_orden["_fecha_ord_nula"].to_numpy(dtype=bool, na_value=False) \
+        if "_fecha_ord_nula" in df_con_orden.columns \
+        else np.zeros(len(df_con_orden), dtype=bool)
     traza = np.where(
         df_con_orden["medidorRetirado"] == df_con_orden["eqp_retirado_esperado"],
         "Corregido Sumi",
         "Corregido Sumi Nro EQP",
     )
+    if _nat_c.any():
+        traza = np.where(_nat_c, "Rescatado por Oracle", traza)
+        log.warning("    Cruce C: %d parte(s) cruzaron con orden de fecha NaT → Rescatado por Oracle.",
+                    int(_nat_c.sum()))
 
     n = len(df_con_orden)
     df_resultados_C = pd.DataFrame({
@@ -638,6 +670,14 @@ def ensamblar_waterfall(
         df_full["SEC_CODIGO_ORIGEN"].notna()
         & (df_full["SEC_CODIGO_ORIGEN"].astype("string") != "PROTELEM")
     )
+    n_otro = int(mask_otro_origen.sum())
+    if n_otro > 0:
+        prev = df_full.loc[mask_otro_origen, "TRAZA_CALIDAD"].value_counts().to_dict()
+        log.warning(
+            "  Regla Otro Origen: %d parte(s) reclasificados "
+            "(SEC_CODIGO_ORIGEN != PROTELEM). Trazas previas: %s",
+            n_otro, prev,
+        )
     df_full.loc[mask_otro_origen, "TRAZA_CALIDAD"] = "Otro Origen"
 
     # 6. Inyección de medidores corregidos. Para las trazas que dicen "el operario
@@ -802,13 +842,23 @@ def normalizar_a_fact_schema(
     id_empresa = 1 if contratista == "CONECTAR" else 2
 
     # 1. ID_ESTADO + ESTADO_PROCESO + es_pagable
+    # ── DIAGNÓSTICO TEMPORAL — remover tras confirmar fix Traza 14 ──
+    print(f"[DIAG] TRAZAS_FUERA_ALCANCE runtime: {config.TRAZAS_FUERA_ALCANCE}", flush=True)
+    mask14 = df["TRAZA_CALIDAD"] == "Código de Tarea No Mapeado"
+    print(f"[DIAG] Filas Traza14 en df: {int(mask14.sum())}", flush=True)
+    if mask14.any():
+        print(f"[DIAG] Sample TRAZA_CALIDAD (Traza14): {df.loc[mask14, 'TRAZA_CALIDAD'].iloc[0]!r}", flush=True)
+    # ── FIN DIAGNÓSTICO ──
     cond_estado = [
         df["TRAZA_CALIDAD"].isin(config.TRAZAS_OK),
         df["TRAZA_CALIDAD"].isin(config.TRAZAS_REVISION),
-        df["TRAZA_CALIDAD"].isin(["No Corresponde TOR CE", "Otro Origen"]),
+        df["TRAZA_CALIDAD"].isin(config.TRAZAS_FUERA_ALCANCE),
     ]
     choice_estado = [1, 2, 4]
     df["ID_ESTADO"] = np.select(cond_estado, choice_estado, default=3).astype("int64")
+    # ── DIAGNÓSTICO TEMPORAL ──
+    _post = df.loc[mask14, "ID_ESTADO"].value_counts().to_dict() if mask14.any() else "ninguna"
+    print(f"[DIAG] Post-select Traza14 id_estado: {_post}", flush=True)
 
     df["ESTADO_PROCESO"] = (
         df["ID_ESTADO"]
@@ -833,6 +883,13 @@ def normalizar_a_fact_schema(
         how="left",
     ).drop(columns=["DESC_TRAZA"], errors="ignore")
     df["ID_TRAZA"] = df["ID_TRAZA"].astype("Int64")
+    n_sin_traza = int(df["ID_TRAZA"].isna().sum())
+    if n_sin_traza > 0:
+        faltantes = df.loc[df["ID_TRAZA"].isna(), "TRAZA_CALIDAD"].unique().tolist()
+        raise ValueError(
+            f"{n_sin_traza} parte(s) sin ID_TRAZA. "
+            f"Trazas no encontradas en dim_traza_calidad_bi: {faltantes}"
+        )
 
     # 6. SUMINISTRO_RAW = Suministro string original (lo que cargó el operario)
     df["SUMINISTRO_RAW"] = df["Suministro"].astype("string")
@@ -888,6 +945,7 @@ def ejecutar_core_para_contratista(
     mapa_archivos: dict[str, int],
     df_dim_traza: pd.DataFrame,
     df_pd_input: pd.DataFrame | None = None,
+    hashes_existentes: set[str] | None = None,  # W-5: hashes ya presentes en la fact
 ) -> tuple[pd.DataFrame | None, dict | None]:
     """Ejecuta el waterfall completo para una contratista.
 
@@ -935,6 +993,16 @@ def ejecutar_core_para_contratista(
     log.info("  Construyendo df_base con _row_id...")
     df_base = _construir_df_base(df_pd)
 
+    # W-5: pre-computar hash antes de que el waterfall modifique medidores/suministro.
+    if hashes_existentes is not None:
+        df_base["_hash_precomputed"] = hashing.id_parte_hash(
+            origen_archivo      = df_base["ORIGEN_ARCHIVO"],
+            srv_codigo          = df_base["Suministro_Norm"],
+            fecha               = df_base["Fecha_Norm"],
+            medidor_colocado    = df_base["medidorColocado"],
+            cod_tipos_mano_obra = df_base["codTiposManoObra"],
+        )
+
     # ── CRUCES ──────────────────────────────────────────────────────────────
     log.info("  Ejecutando Cruce A (suministro + orden CE propia)...")
     df_resultados_A, df_pendientes_A = cruce_A(df_base, df_ord_ce_propia, df_tecnica)
@@ -949,6 +1017,20 @@ def ejecutar_core_para_contratista(
 
     log.info("  Ensamblando waterfall + reglas huérfano + correcciones...")
     df_full = ensamblar_waterfall(df_base, df_resultados_A, df_resultados_B, df_resultados_C)
+
+    # W-5: marcar Traza 18 ANTES de enriquecer_y_deduplicar para que estos partes
+    # caigan en el pool de descartes técnicos y no afecten el ranking de nuevos.
+    if hashes_existentes and "_hash_precomputed" in df_full.columns:
+        mask_dup_hist = df_full["_hash_precomputed"].isin(hashes_existentes)
+        n_dup = int(mask_dup_hist.sum())
+        if n_dup > 0:
+            log.warning(
+                "  Traza 18: %d parte(s) ya existentes en lote anterior → "
+                "Registro Ya Procesado en Lote Anterior.",
+                n_dup,
+            )
+            df_full.loc[mask_dup_hist, "TRAZA_CALIDAD"] = \
+                "Registro Ya Procesado en Lote Anterior"
 
     log.info("  Enriqueciendo (USR/FASE/precio) + dedup Repetido X Sumi...")
     df_final = enriquecer_y_deduplicar(df_full, df_usr, df_fases, df_mc)

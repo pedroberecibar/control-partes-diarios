@@ -46,6 +46,7 @@ class ParteDiarioProcesado(Base):
     # Resultado del waterfall (Etapa 3)
     ord_nro = Column(Integer, index=True, nullable=True)
     cod_epec = Column(Integer, nullable=True)
+    codigo_contratista = Column(String(20), nullable=True)  # Código operativo declarado por contratista (zfill 2, ej. "01", "04")
     id_estado = Column(Integer, nullable=False)            # FK lógica → dim_estado_bi
     id_traza = Column(Integer, nullable=False, index=True) # FK lógica → dim_traza_calidad_bi
 

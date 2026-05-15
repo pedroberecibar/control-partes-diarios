@@ -95,6 +95,7 @@ export function normalizeParteDetalle(p) {
     operario: p.operario_nombre || '—',
     operario_excel: p.operario_excel || null,
     version: p.version,
+    codigo_contratista: p.codigo_contratista || null,
     cod_epec_sugerido: p.cod_epec_sugerido,
     valor_uses_origen: p.valor_uses_origen,
     valor_uses_obs: p.valor_uses_obs,

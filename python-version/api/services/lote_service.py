@@ -53,7 +53,7 @@ _ESTADO_NOMBRES: dict[int, str] = {
     1: "Aprobado",
     2: "Revisión",
     3: "Rechazado",
-    4: "Fuera Alcance",
+    4: "Fuera de Alcance",
 }
 
 

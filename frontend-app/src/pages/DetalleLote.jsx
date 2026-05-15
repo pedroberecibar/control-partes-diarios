@@ -62,19 +62,8 @@ const ESTADO_CHIP = {
   'Fuera Alcance': { color: '#5b4a00', bg: '#fef9e7' },
 };
 
-// ── Trazas clasificadas por Estado de Proceso (1:1 con backend) ──────────
-const TRAZAS_APROBADO      = new Set([1, 2, 3, 4, 12]);
-const TRAZAS_REVISION      = new Set([5, 19, 20]);
-const TRAZAS_RECHAZADO     = new Set([7, 8, 9, 10, 13, 14, 15, 16, 17, 18]);
-const TRAZAS_FUERA_ALCANCE = new Set([6, 11]);
-
-// ── Mapeo estado → set y paleta cromática ────────────────────────────────
-const SET_POR_ESTADO = {
-  'Aprobado':         TRAZAS_APROBADO,
-  'Revisión':         TRAZAS_REVISION,
-  'Rechazado':        TRAZAS_RECHAZADO,
-  'Fuera de Alcance': TRAZAS_FUERA_ALCANCE,
-};
+// ── Mapeo estado → id_estado numérico (fuente única: backend) ────────────
+const ESTADO_ID = { 'Aprobado': 1, 'Revisión': 2, 'Rechazado': 3, 'Fuera de Alcance': 4 };
 const PALETAS = {
   'Aprobado':         ['#1d8348', '#27ae60', '#52be80', '#82e0aa', '#a9dfbf'],
   'Revisión':         ['#e6910a', '#f0b429', '#f9cc70'],
@@ -163,19 +152,19 @@ export function DetalleLote({ loteId, onBack }) {
   // Conteos por Estado de Proceso
   let cntAprobado = 0, cntRevision = 0, cntRechazado = 0, cntFueraAlcance = 0;
   for (const t of dash.distribucion_trazas) {
-    if (TRAZAS_APROBADO.has(t.id_traza))           cntAprobado     += t.count;
-    else if (TRAZAS_REVISION.has(t.id_traza))      cntRevision     += t.count;
-    else if (TRAZAS_RECHAZADO.has(t.id_traza))     cntRechazado    += t.count;
-    else if (TRAZAS_FUERA_ALCANCE.has(t.id_traza)) cntFueraAlcance += t.count;
+    if      (t.id_estado === 1) cntAprobado     += t.count;
+    else if (t.id_estado === 2) cntRevision     += t.count;
+    else if (t.id_estado === 3) cntRechazado    += t.count;
+    else if (t.id_estado === 4) cntFueraAlcance += t.count;
   }
   const totalBase = dash.total_registros || 1;
 
   // Datos para la dona dinámica según estado seleccionado
   const MAX_SLICES = 5;
-  const setActivo = SET_POR_ESTADO[estadoSeleccionado];
-  const palette   = PALETAS[estadoSeleccionado];
+  const estadoIdActivo = ESTADO_ID[estadoSeleccionado];
+  const palette        = PALETAS[estadoSeleccionado];
   const trazasFiltradas = dash.distribucion_trazas
-    .filter(t => setActivo.has(t.id_traza) && t.count > 0)
+    .filter(t => t.id_estado === estadoIdActivo && t.count > 0)
     .sort((a, b) => b.count - a.count);
   let donutData;
   if (trazasFiltradas.length <= MAX_SLICES) {
@@ -342,14 +331,14 @@ export function DetalleLote({ loteId, onBack }) {
             {
               label: 'Rechazado',
               count: cntRechazado,
-              desc:  'No pagables: sin orden, datos inválidos, duplicados (trazas 7,8,9,10,13,14,15,16,17,18)',
+              desc:  'No pagables: sin orden, datos inválidos, duplicados sistémicos',
               color: '#7a1c1c',
               bg:    '#fdf1f0',
             },
             {
               label: 'Fuera de Alcance',
               count: cntFueraAlcance,
-              desc:  'No corresponden al contrato TOR CE actual (trazas 6,11)',
+              desc:  'No corresponden al alcance del contrato TOR CE actual',
               color: '#5b4a00',
               bg:    '#fef9e7',
             },

@@ -53,3 +53,39 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 ### Estado Actual
 * Hecho: Etapas 0 a 4 (seeds, maestros, adapters, core waterfall, panel KPIs, observaciones).
 * Pipeline E2E activo vía `python run_pipeline.py`.
+
+## Comandos
+
+```bash
+# Pipeline batch completo
+python run_pipeline.py
+
+# Solo una etapa
+python run_pipeline.py --solo-etapa 3
+
+# API web (dev)
+uvicorn api.main:app --reload --port 8000
+
+# Tests
+pytest tests/
+pytest tests/test_lote_service_dedup.py -v
+pytest tests/ -k "traza18 or overlap"
+```
+
+## Dos modos de ejecución
+
+El proyecto tiene dos entrypoints paralelos que comparten el mismo motor:
+
+1. **Pipeline batch** (`run_pipeline.py`): lee de `data/input/`, escribe a `data/gold/`. Llama `src/etapa3_core.ejecutar_core_para_contratista()` directamente.
+
+2. **API web** (`api/main.py`): recibe archivos Excel vía HTTP. Flujo: `POST /api/v1/lotes` → `lote_service.crear_lote()` → `worker.procesar_lote_en_background()` → `_ejecutar_motor_analitico()` → mismo `ejecutar_core_para_contratista()`.
+
+## Antiduplicidad de lotes (4 capas)
+
+`api/services/lote_service.crear_lote()` bloquea uploads duplicados en capas:
+1. Bytes idénticos (SHA256 del fichero crudo)
+2. Contenido normalizado idéntico (Excel re-guardado)
+3. Business keys (Suministro+Fecha) > 50% ya en DB → 409 OVERLAP_WARN; bypasseable con `force=true`
+4. Hash exacto (ID_PARTE_HASH) → Traza 18 "Registro Ya Procesado en Lote Anterior" en motor
+
+Las capas 1 y 2 son inviolables.

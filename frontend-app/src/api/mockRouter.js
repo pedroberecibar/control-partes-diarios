@@ -11,19 +11,19 @@ function makeDashStub(lote) {
   const distTrazas = [];
   if (apr > 0) {
     const t1 = Math.round(apr * 0.72);
-    distTrazas.push({ id_traza: 1,  desc_traza: 'Original OK',              desc_estado: 'Aprobado',         count: t1,        pct: Math.round(t1 / tot * 100) });
-    distTrazas.push({ id_traza: 3,  desc_traza: 'Corregido Nro Medidor',    desc_estado: 'Aprobado',         count: apr - t1,  pct: Math.round((apr - t1) / tot * 100) });
+    distTrazas.push({ id_traza: 1,  id_estado: 1, desc_traza: 'Original OK',             desc_estado: 'Aprobado',         count: t1,        pct: Math.round(t1 / tot * 100) });
+    distTrazas.push({ id_traza: 3,  id_estado: 1, desc_traza: 'Corregido Nro Medidor',   desc_estado: 'Aprobado',         count: apr - t1,  pct: Math.round((apr - t1) / tot * 100) });
   }
   if (rev > 0) {
-    distTrazas.push({ id_traza: 19, desc_traza: 'Rescatado por Oracle',      desc_estado: 'En Revisión',      count: rev,       pct: Math.round(rev / tot * 100) });
+    distTrazas.push({ id_traza: 19, id_estado: 2, desc_traza: 'Rescatado por Oracle',    desc_estado: 'En Revisión',      count: rev,       pct: Math.round(rev / tot * 100) });
   }
   if (rech > 0) {
     const t7 = Math.round(rech * 0.6);
-    distTrazas.push({ id_traza: 7,  desc_traza: 'Sin Orden Asociada',        desc_estado: 'Rechazado',        count: t7,        pct: Math.round(t7 / tot * 100) });
-    distTrazas.push({ id_traza: 13, desc_traza: 'Informado - No Ejecutado',  desc_estado: 'Rechazado',        count: rech - t7, pct: Math.round((rech - t7) / tot * 100) });
+    distTrazas.push({ id_traza: 7,  id_estado: 3, desc_traza: 'Sin Orden Asociada',      desc_estado: 'Rechazado',        count: t7,        pct: Math.round(t7 / tot * 100) });
+    distTrazas.push({ id_traza: 13, id_estado: 3, desc_traza: 'Informado - No Ejecutado',desc_estado: 'Rechazado',        count: rech - t7, pct: Math.round((rech - t7) / tot * 100) });
   }
   if (fa > 0) {
-    distTrazas.push({ id_traza: 6,  desc_traza: 'No Corresponde TOR CE',     desc_estado: 'Fuera de Alcance', count: fa,        pct: Math.round(fa / tot * 100) });
+    distTrazas.push({ id_traza: 6,  id_estado: 4, desc_traza: 'No Corresponde TOR CE',   desc_estado: 'Fuera de Alcance', count: fa,        pct: Math.round(fa / tot * 100) });
   }
 
   const efectividad = tot > 0

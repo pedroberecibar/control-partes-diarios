@@ -222,6 +222,7 @@ class ParteImportService:
                 # Resultado del waterfall
                 ord_nro=self._safe_int(row.get("ORD_NRO")),
                 cod_epec=(_cod := self._cod_epec_efectivo(row)),
+                codigo_contratista=self._safe_str(row.get("CODIGO_CONTRATISTA")),
                 id_estado=int(row["ID_ESTADO"]),    # nullable=False — fail-fast si falta
                 id_traza=int(row["ID_TRAZA"]),       # nullable=False — fail-fast si falta
 
@@ -255,9 +256,9 @@ class ParteImportService:
         return {p.id_parte_hash: p for p in procesados}
 
     def _cod_epec_efectivo(self, row: pd.Series) -> int | None:
-        """Para partes Aprobados (id_estado=1), garantiza un cod_epec: original o sugerido."""
+        """Para partes Aprobados o en Revisión (id_estado in 1, 2), garantiza un cod_epec: original o sugerido."""
         cod = self._safe_int(row.get("CODIGO_EPEC"))
-        if cod is None and int(row.get("ID_ESTADO", 0)) == 1:
+        if cod is None and int(row.get("ID_ESTADO", 0)) in (1, 2):
             cod = self._safe_int(row.get("COD_EPEC_SUGERIDO"))
         return cod
 
@@ -531,7 +532,7 @@ class ParteImportService:
         if not all_hashes:
             return df_final
 
-        existing = contar_hashes_existentes(self.db, all_hashes)
+        existing = contar_hashes_existentes(self.db, all_hashes, lote_id_excluir=lote_id)
         if not existing:
             return df_final
 

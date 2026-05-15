@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import traceback
 from pathlib import Path
 
 import pandas as pd
@@ -23,8 +24,11 @@ import pandas as pd
 from api.core.database import SessionLocal
 from api.db.models.base_models import Contratista, LoteArchivo
 from api.services.adapter_dispatcher import ejecutar_adapter
+from api.services.parte_dedup_helpers import contar_hashes_existentes
 from api.services.parte_import_service import ParteImportService
 
+from src import config as src_config
+from src import hashing
 from src import io_lakehouse as io
 from src.etapa3_core import ejecutar_core_para_contratista
 from src.etapa4_control_obs import procesar_etapa4
@@ -102,7 +106,9 @@ def procesar_lote_en_background(lote_id: int) -> None:
             log.info("Lote %d esperando turno en el motor analítico.", lote_id)
             with _motor_lock:
                 log.info("Lote %d ingresó al motor analítico.", lote_id)
-                df_final, df_img = _ejecutar_motor_analitico(contratista.nombre, df_aux, db=db)
+                df_final, df_img = _ejecutar_motor_analitico(
+                    contratista.nombre, df_aux, db=db, lote_id=lote.id,
+                )
 
             if df_final is None or df_final.empty:
                 raise ValueError("El motor analítico no pudo procesar el lote (output vacío tras core y etapa4).")
@@ -130,11 +136,15 @@ def procesar_lote_en_background(lote_id: int) -> None:
 
         except Exception as e:
             db.rollback()
+            tb = traceback.format_exc()
+            # Imprimir traceback completo a stdout para que aparezca en uvicorn,
+            # independiente de la configuración de logging.
+            print(f"[WORKER ERROR] Lote {lote_id} falló:\n{tb}", flush=True)
             # Recuperar el lote tras el rollback para poder marcarlo en ERROR.
             lote = db.query(LoteArchivo).filter(LoteArchivo.id == lote_id).first()
             if lote is not None:
                 lote.estado = "RECHAZADO"
-                lote.detalle_error = str(e)[:500]
+                lote.detalle_error = tb[:4000]
                 lote.paso_actual = "RECHAZADO"
                 lote.progreso_pct = 100
                 db.commit()
@@ -209,8 +219,14 @@ def _ejecutar_motor_analitico(
     nombre_contratista: str,
     df_aux: pd.DataFrame,
     db=None,
+    lote_id: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    """Corre Etapa 3 (Core) + Etapa 4 (Control Obs) en memoria."""
+    """Corre Etapa 3 (Core) + Etapa 4 (Control Obs) en memoria.
+
+    `lote_id`: si se provee, se excluyen las filas de ese lote del check W-5 de
+    duplicados históricos. Necesario al reprocesar para evitar self-overlap
+    (los hashes viejos del propio lote no deben marcarse como Traza 18).
+    """
     mapa_archivos = (
         io.read_table("mapa_archivos", capa="seed")
         .set_index("ARCHIVO_X")["ID_ARCHIVO"]
@@ -218,11 +234,43 @@ def _ejecutar_motor_analitico(
     )
     df_dim_traza = io.read_table("dim_traza_calidad_bi", capa="dim")
 
+    # W-5: detectar duplicados históricos por ID_PARTE_HASH exacto.
+    hashes_existentes: set[str] = set()
+    if db is not None:
+        # Suministro viene de Excel como float64 (1234.0). Si trae decimales
+        # reales (1234.5), el cast safe a Int64 falla — redondear primero.
+        _suministro_num = pd.to_numeric(df_aux["Suministro"], errors="coerce")
+        _frac = _suministro_num.dropna() % 1
+        if (_frac != 0).any():
+            n_decimales = int((_frac != 0).sum())
+            log.warning(
+                "Suministro contiene %d valores con parte decimal no nula — se truncan al entero.",
+                n_decimales,
+            )
+        _hashes_lote = hashing.id_parte_hash(
+            origen_archivo      = df_aux["ORIGEN_ARCHIVO"],
+            srv_codigo          = _suministro_num.round().astype("Int64"),
+            fecha               = pd.to_datetime(df_aux["Fecha"], errors="coerce").dt.normalize(),
+            medidor_colocado    = pd.to_numeric(df_aux["medidorColocado"], errors="coerce"),
+            cod_tipos_mano_obra = df_aux["codTiposManoObra"],
+        )
+        _set_lote = set(_hashes_lote.dropna())
+        hashes_existentes = contar_hashes_existentes(db, _set_lote, lote_id_excluir=lote_id)
+        if _set_lote:
+            overlap_pct = len(hashes_existentes) / len(_set_lote)
+            if overlap_pct > src_config.OVERLAP_WARNING_THRESHOLD:
+                log.warning(
+                    "  OVERLAP_WARNING: %.0f%% de partes del lote ya existen "
+                    "(threshold=%.0f%%). Se procesará con Traza 18.",
+                    overlap_pct * 100, src_config.OVERLAP_WARNING_THRESHOLD * 100,
+                )
+
     df_contratista, _metricas3 = ejecutar_core_para_contratista(
-        contratista=nombre_contratista.upper(),
-        mapa_archivos=mapa_archivos,
-        df_dim_traza=df_dim_traza,
-        df_pd_input=df_aux,
+        contratista      = nombre_contratista.upper(),
+        mapa_archivos    = mapa_archivos,
+        df_dim_traza     = df_dim_traza,
+        df_pd_input      = df_aux,
+        hashes_existentes= hashes_existentes,
     )
     if df_contratista is None or df_contratista.empty:
         return df_contratista, None
@@ -235,41 +283,42 @@ def _ejecutar_motor_analitico(
         df_reglas = svc.cargar_reglas_como_dataframe()
         mapeo_codigos = svc.mapeo_codigos_epec_por_contratista()
 
-    df_aprobados, df_img, _metricas4 = procesar_etapa4(
+    # Auto-rescate de "Sin Orden Asociada" contra DB local sincronizada (CE+PROTELEM).
+    # Corre ANTES de Etapa 4 para que trazas 19/20 (rescatados, id_estado=2) reciban
+    # tratamiento completo de observaciones igual que los aprobados.
+    _auto_rescatar_local(df_contratista, db)
+
+    df_procesado_obs, df_img, _metricas4 = procesar_etapa4(
         df_fact_input=df_contratista,
         df_reglas=df_reglas,
         mapeo_codigos=mapeo_codigos,
     )
 
-    if df_aprobados is None or df_aprobados.empty:
+    if df_procesado_obs is None or df_procesado_obs.empty:
         log.info(
-            "WORKER motor — etapa4 sin aprobados; importando %d partes desde core (ID_ESTADO≠1).",
+            "WORKER motor — etapa4 sin partes con ord_nro; importando %d partes desde core.",
             len(df_contratista),
         )
-        # Aún sin aprobados, enriquecer con USES si hay reglas disponibles.
+        # Aún sin matches en etapa4, enriquecer con USES si hay reglas disponibles.
         if df_reglas is not None:
             df_contratista = _enriquecer_uses(df_contratista, df_reglas)
-        _auto_rescatar_local(df_contratista, db)
         return df_contratista, None
 
-    # Recombinar aprobados enriquecidos por etapa4 con los no-aprobados del core.
-    # Sin esto, los ~15k rechazados/huérfanos se descartan silenciosamente.
-    mask_aprobados = df_contratista["ID_PARTE_HASH"].isin(df_aprobados["ID_PARTE_HASH"])
-    df_no_aprobados = df_contratista.loc[~mask_aprobados].copy()
+    # Recombinar partes procesados por etapa4 (aprobados + revisión con ord_nro)
+    # con el resto del core. Sin esto, los rechazados/huérfanos se descartan.
+    mask_procesado = df_contratista["ID_PARTE_HASH"].isin(df_procesado_obs["ID_PARTE_HASH"])
+    df_no_procesado = df_contratista.loc[~mask_procesado].copy()
 
-    # Etapa 4 solo procesa aprobados, por lo que df_no_aprobados no tiene
+    # Etapa 4 sólo enriquece los que matcheó, así que df_no_procesado no tiene
     # VALOR_USES_ORIGEN. Lo llenamos aquí con el mismo df_reglas ya cargado.
-    if df_reglas is not None and not df_no_aprobados.empty:
-        df_no_aprobados = _enriquecer_uses(df_no_aprobados, df_reglas)
+    if df_reglas is not None and not df_no_procesado.empty:
+        df_no_procesado = _enriquecer_uses(df_no_procesado, df_reglas)
 
-    df_completo = pd.concat([df_aprobados, df_no_aprobados], ignore_index=True, sort=False)
+    df_completo = pd.concat([df_procesado_obs, df_no_procesado], ignore_index=True, sort=False)
     log.info(
-        "WORKER motor — etapa4: aprobados=%d, no-aprobados=%d, total=%d",
-        len(df_aprobados), len(df_no_aprobados), len(df_completo),
+        "WORKER motor — etapa4: procesados_obs=%d, no-procesados=%d, total=%d",
+        len(df_procesado_obs), len(df_no_procesado), len(df_completo),
     )
-
-    # Auto-rescate de "Sin Orden Asociada" contra DB local sincronizada (CE+PROTELEM).
-    _auto_rescatar_local(df_completo, db)
 
     return df_completo, df_img
 

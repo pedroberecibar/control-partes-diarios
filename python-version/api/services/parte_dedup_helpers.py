@@ -24,10 +24,18 @@ from api.db.models.domain_models import ParteDiarioProcesado
 _CHUNK_SIZE = 900  # Límite seguro de SQLite para `IN (...)`
 
 
-def contar_hashes_existentes(db: Session, hashes: Iterable[str]) -> set[str]:
+def contar_hashes_existentes(
+    db: Session,
+    hashes: Iterable[str],
+    lote_id_excluir: int | None = None,
+) -> set[str]:
     """Devuelve el subconjunto de hashes que ya existen en `partes_diarios_procesados`.
 
     Implementación con chunked-IN para no superar los 999 placeholders de SQLite.
+
+    Si `lote_id_excluir` se provee, se ignoran las filas de ese lote — útil al
+    reprocesar un lote para que sus propios hashes viejos no aparezcan como
+    duplicados históricos (W-5 self-overlap).
     """
     todos = [h for h in hashes if h]
     if not todos:
@@ -36,11 +44,13 @@ def contar_hashes_existentes(db: Session, hashes: Iterable[str]) -> set[str]:
     existentes: set[str] = set()
     for i in range(0, len(todos), _CHUNK_SIZE):
         chunk = todos[i : i + _CHUNK_SIZE]
-        rows = (
+        query = (
             db.query(ParteDiarioProcesado.id_parte_hash)
             .filter(ParteDiarioProcesado.id_parte_hash.in_(chunk))
-            .all()
         )
+        if lote_id_excluir is not None:
+            query = query.filter(ParteDiarioProcesado.lote_id != lote_id_excluir)
+        rows = query.all()
         existentes.update(r[0] for r in rows)
     return existentes
 

@@ -99,8 +99,10 @@ def _cargar_base(df_fact_input: pd.DataFrame | None = None) -> tuple[pd.DataFram
         .merge(df_usr,  left_on="USR_ID", right_on="USR_NUMERO", how="left")
         .merge(df_arch, on="ID_ARCHIVO", how="left")
     )
-    # Filtro Aprobado (es_pagable=1 ↔ DESC_ESTADO='Aprobado').
-    df_base = df_base.loc[df_base["DESC_ESTADO"] == "Aprobado"].copy()
+    # Filtro: Aprobados + Revisión. Ambos pueden tener ord_nro asociado y por lo
+    # tanto observaciones cargadas por el operario en la app móvil. Excluye
+    # Rechazado y Fuera de Alcance.
+    df_base = df_base.loc[df_base["DESC_ESTADO"].isin(["Aprobado", "Revisión"])].copy()
 
     # Anti fan-out: si un join trajo dups, nos quedamos con uno por ID_PARTE_HASH.
     n_pre = len(df_base)
@@ -109,7 +111,7 @@ def _cargar_base(df_fact_input: pd.DataFrame | None = None) -> tuple[pd.DataFram
     if n_pre != n_post:
         log.warning("   Fan-out detectado y corregido: %d → %d", n_pre, n_post)
     else:
-        log.info("   Sin fan-out: %d registros aprobados.", n_post)
+        log.info("   Sin fan-out: %d registros (aprobados+revisión).", n_post)
 
     cols_base = list(df_base.columns)
     return df_base, cols_base
@@ -147,10 +149,14 @@ def _join_con_pivot_app(df_base: pd.DataFrame) -> pd.DataFrame:
 # =============================================================================
 
 def _normalizar_obs(df: pd.DataFrame) -> pd.DataFrame:
-    """Agrega `_APP_<campo>` (1 si la celda no es nula, 0 si es nula) y `_SIN_OBS`."""
+    """Agrega `_APP_<campo>` (1 si la celda tiene valor, 0 si es nula/whitespace) y `_SIN_OBS`."""
     for col_app, col_regla in OBS_COLS:
-        # En el pivot, "no observación" llega como NaN. Notna → 1, sino 0.
-        df[f"_APP_{col_regla}"] = df[col_app].notna().astype("int8")
+        col = df[col_app]
+        # Normalizar whitespace-only → NA antes de .notna() para evitar falsos positivos:
+        # un valor "   " (spacebar) contaría como observación positiva sin este paso.
+        if pd.api.types.is_string_dtype(col) or pd.api.types.is_object_dtype(col):
+            col = col.str.strip().mask(col.str.strip() == "")
+        df[f"_APP_{col_regla}"] = col.notna().astype("int8")
 
     cols_app = [f"_APP_{cr}" for _, cr in OBS_COLS]
     df["_SIN_OBS"] = (df[cols_app].sum(axis=1) == 0)
